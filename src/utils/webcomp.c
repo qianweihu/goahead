@@ -1,10 +1,10 @@
 /*
     webcomp -- Compile web pages into C source
 
-    Usage: webcomp --prefix prefix filelist >webrom.c
+    Usage: webcomp --strip strip filelist >webrom.c
     Where: 
         filelist is a file containing the pathnames of all web pages
-        prefix is a path prefix to remove from all the web page pathnames
+        strip is a path prefix to remove from all the web page pathnames
         webrom.c is the resulting C source file to compile and link.
 
     Copyright (c) All Rights Reserved. See details at the end of the file.
@@ -16,33 +16,33 @@
 
 /**************************** Forward Declarations ****************************/
 
-static int  compile(char *fileList, char *prefix);
+static int  compile(char *fileList, char *strip);
 static void usage();
 
 /*********************************** Code *************************************/
 
 int main(int argc, char* argv[])
 {
-    char    *argp, *fileList, *prefix;
+    char    *argp, *fileList, *strip;
     int     argind;
 
     fileList = NULL;
-    prefix = "";
+    strip = "";
 
     for (argind = 1; argind < argc; argind++) {
         argp = argv[argind];
         if (*argp != '-') {
             break;
-        } else if (strcmp(argp, "--prefix") == 0) {
+        } else if (strcmp(argp, "--prefix") == 0 || strcmp(argp, "--strip") == 0) {
             if (argind >= argc) usage();
-            prefix = argv[++argind];
+            strip = argv[++argind];
         }
     }
     if (argind >= argc) {
         usage();
     }
     fileList = argv[argind];
-    if (compile(fileList, prefix) < 0) {
+    if (compile(fileList, strip) < 0) {
         return -1;
     }
     return 0;
@@ -51,15 +51,15 @@ int main(int argc, char* argv[])
 
 static void usage()
 {
-    fprintf(stdout, "usage: webcomp [--prefix prefix] filelist >output.c\n\
-        --prefix specifies is a path prefix to remove from all the web page pathnames\n\
+    fprintf(stdout, "usage: webcomp [--strip strip] filelist >output.c\n\
+        --strip specifies is a path prefix to remove from all the web page pathnames\n\
         filelist is a file containing the pathnames of all web pages\n\
         output.c is the resulting C source file to compile and link.\n");
     exit(2);
 }
 
 
-static int compile(char *fileList, char *prefix)
+static int compile(char *fileList, char *strip)
 {
     WebsStat        sbuf;
     WebsTime        now;
@@ -74,7 +74,7 @@ static int compile(char *fileList, char *prefix)
         return -1;
     }
     time(&now);
-    fprintf(stdout, "/*\n   rom-documents.c \n");
+    fprintf(stdout, "/*\n   rom.c \n");
     fprintf(stdout, "   Compiled by webcomp: %s */\n\n", ctime(&now));
     fprintf(stdout, "#include \"goahead.h\"\n\n");
     fprintf(stdout, "#if ME_ROM\n\n");
@@ -137,12 +137,12 @@ static int compile(char *fileList, char *prefix)
         /*
             Remove the prefix and add a leading "/" when we print the path
          */
-        if (strncmp(file, prefix, strlen(prefix)) == 0) {
-            cp = &file[strlen(prefix)];
+        if (strncmp(file, strip, strlen(strip)) == 0) {
+            cp = &file[strlen(strip)];
         } else {
             cp = file;
         }
-        while((sl = strchr(file, '\\')) != NULL) {
+        while ((sl = strchr(file, '\\')) != NULL) {
             *sl = '/';
         }
         if (*cp == '/') {
@@ -150,10 +150,10 @@ static int compile(char *fileList, char *prefix)
         }
 
         if (stat(file, &sbuf) == 0 && sbuf.st_mode & S_IFDIR) {
-            fprintf(stdout, "\t{ \"%s\", 0, 0 },\n", cp);
+            fprintf(stdout, "\t{ \"/%s\", 0, 0 },\n", cp);
             continue;
         }
-        fprintf(stdout, "\t{ \"%s\", p%d, %d },\n", cp, nFile, (int) sbuf.st_size);
+        fprintf(stdout, "\t{ \"/%s\", p%d, %d },\n", cp, nFile, (int) sbuf.st_size);
         nFile++;
     }
     fclose(lp); 

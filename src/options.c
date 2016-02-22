@@ -10,6 +10,10 @@
 
 /*********************************** Code *************************************/
 
+/*
+    Handle OPTIONS and TRACE methods.
+    Return true to indicate the request was handled, even for errors.
+ */
 static bool optionsHandler(Webs *wp)
 {
     assert(wp);
@@ -50,7 +54,7 @@ PUBLIC int websOptionsOpen()
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.

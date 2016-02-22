@@ -22,7 +22,7 @@
     #define ME_COMPANY "embedthis"
 #endif
 #ifndef ME_COMPATIBLE
-    #define ME_COMPATIBLE "3.4"
+    #define ME_COMPATIBLE "3.6"
 #endif
 #ifndef ME_COMPILER_HAS_ATOMIC
     #define ME_COMPILER_HAS_ATOMIC 1
@@ -246,6 +246,9 @@
 #ifndef ME_PREFIXES
     #define ME_PREFIXES "install-prefixes"
 #endif
+#ifndef ME_ROM
+    #define ME_ROM 0
+#endif
 #ifndef ME_STATIC
     #define ME_STATIC 1
 #endif
@@ -253,7 +256,7 @@
     #define ME_TITLE "Embedthis GoAhead"
 #endif
 #ifndef ME_VERSION
-    #define ME_VERSION "3.4.12"
+    #define ME_VERSION "3.6.2"
 #endif
 
 /* Prefixes */
@@ -273,7 +276,7 @@
     #define ME_APP_PREFIX "/usr/local/lib/goahead"
 #endif
 #ifndef ME_VAPP_PREFIX
-    #define ME_VAPP_PREFIX "/usr/local/lib/goahead/3.4.12"
+    #define ME_VAPP_PREFIX "/usr/local/lib/goahead/3.6.2"
 #endif
 #ifndef ME_BIN_PREFIX
     #define ME_BIN_PREFIX "/usr/local/bin"
@@ -306,7 +309,7 @@
     #define ME_CACHE_PREFIX "/var/spool/goahead/cache"
 #endif
 #ifndef ME_SRC_PREFIX
-    #define ME_SRC_PREFIX "goahead-3.4.12"
+    #define ME_SRC_PREFIX "goahead-3.6.2"
 #endif
 
 /* Suffixes */
@@ -328,7 +331,7 @@
 
 /* Profile */
 #ifndef ME_CONFIG_CMD
-    #define ME_CONFIG_CMD "me -d -q -platform macosx-x64-static -static -configure . -with openssl -gen xcode"
+    #define ME_CONFIG_CMD "me -d -q -platform macosx-x64-static -static -configure . -gen xcode"
 #endif
 #ifndef ME_GOAHEAD_PRODUCT
     #define ME_GOAHEAD_PRODUCT 1
@@ -345,13 +348,13 @@
     #define ME_MAJOR_VERSION 3
 #endif
 #ifndef ME_MINOR_VERSION
-    #define ME_MINOR_VERSION 4
+    #define ME_MINOR_VERSION 6
 #endif
 #ifndef ME_PATCH_VERSION
-    #define ME_PATCH_VERSION 12
+    #define ME_PATCH_VERSION 2
 #endif
 #ifndef ME_VNUM
-    #define ME_VNUM 3000400012
+    #define ME_VNUM 300060002
 #endif
 
 /* Components */
@@ -365,13 +368,13 @@
     #define ME_COM_MATRIXSSL 0
 #endif
 #ifndef ME_COM_MBEDTLS
-    #define ME_COM_MBEDTLS 0
+    #define ME_COM_MBEDTLS 1
 #endif
 #ifndef ME_COM_NANOSSL
     #define ME_COM_NANOSSL 0
 #endif
 #ifndef ME_COM_OPENSSL
-    #define ME_COM_OPENSSL 1
+    #define ME_COM_OPENSSL 0
 #endif
 #ifndef ME_COM_OSDEP
     #define ME_COM_OSDEP 1

@@ -22,7 +22,7 @@
     #define ME_COMPANY "embedthis"
 #endif
 #ifndef ME_COMPATIBLE
-    #define ME_COMPATIBLE "3.4"
+    #define ME_COMPATIBLE "3.6"
 #endif
 #ifndef ME_COMPILER_HAS_ATOMIC
     #define ME_COMPILER_HAS_ATOMIC 0
@@ -234,11 +234,14 @@
 #ifndef ME_PREFIXES
     #define ME_PREFIXES "install-prefixes"
 #endif
+#ifndef ME_ROM
+    #define ME_ROM 0
+#endif
 #ifndef ME_TITLE
     #define ME_TITLE "Embedthis GoAhead"
 #endif
 #ifndef ME_VERSION
-    #define ME_VERSION "3.4.12"
+    #define ME_VERSION "3.6.2"
 #endif
 
 /* Prefixes */
@@ -333,13 +336,13 @@
     #define ME_MAJOR_VERSION 3
 #endif
 #ifndef ME_MINOR_VERSION
-    #define ME_MINOR_VERSION 4
+    #define ME_MINOR_VERSION 6
 #endif
 #ifndef ME_PATCH_VERSION
-    #define ME_PATCH_VERSION 12
+    #define ME_PATCH_VERSION 2
 #endif
 #ifndef ME_VNUM
-    #define ME_VNUM 3000400012
+    #define ME_VNUM 300060002
 #endif
 
 /* Components */
@@ -351,6 +354,9 @@
 #endif
 #ifndef ME_COM_LINK
     #define ME_COM_LINK 1
+#endif
+#ifndef ME_COM_MBEDTLS
+    #define ME_COM_MBEDTLS 0
 #endif
 #ifndef ME_COM_OSDEP
     #define ME_COM_OSDEP 1

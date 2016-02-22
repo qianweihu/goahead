@@ -59,7 +59,7 @@ PUBLIC char stateMap[] = {
 
 /*
     Format:         %[modifier][width][precision][bits][type]
-  
+
     The Class map will map from a specifier letter to a state.
  */
 PUBLIC char classMap[] = {
@@ -138,7 +138,7 @@ typedef struct Format {
         } else { \
             *(fmt)->end = '\0'; \
         } \
-    } else 
+    } else
 
 /*
     The handle list stores the length of the list and the number of used handles in the first two words.  These are
@@ -173,10 +173,13 @@ static int       callbackMax;
 
 static HashTable **sym;             /* List of symbol tables */
 static int       symMax;            /* One past the max symbol table */
-static char      *logPath;          /* Log file name */
-static int       logFd;             /* Log file handle */
 
 char *embedthisGoAheadCopyright = EMBEDTHIS_GOAHEAD_COPYRIGHT;
+
+#if ME_GOAHEAD_LOGGING
+static char      *logPath;          /* Log file name */
+static int       logFd;             /* Log file handle */
+#endif
 
 /********************************** Forwards **********************************/
 
@@ -184,8 +187,11 @@ static int calcPrime(int size);
 static int getBinBlockSize(int size);
 static int hashIndex(HashTable *tp, char *name);
 static WebsKey *hash(HashTable *tp, char *name);
+
+#if ME_GOAHEAD_LOGGING
 static void defaultLogHandler(int level, char *buf);
 static WebsLogHandler logHandler = defaultLogHandler;
+#endif
 
 static int  getState(char c, int state);
 static int  growBuf(Format *fmt);
@@ -202,6 +208,7 @@ PUBLIC int websRuntimeOpen()
 {
     symMax = 0;
     sym = 0;
+    srand((uint) time(NULL));
     return 0;
 }
 
@@ -273,22 +280,24 @@ PUBLIC void websStopEvent(int id)
 }
 
 
-WebsTime websRunEvents()
+int websRunEvents()
 {
     Callback    *s;
-    WebsTime    delay, now, nextEvent;
-    int         i;
+    WebsTime    now;
+    int         i, delay, nextEvent;
 
     nextEvent = (MAXINT / 1000);
     now = time(0);
 
     for (i = 0; i < callbackMax; i++) {
         if ((s = callbacks[i]) != NULL) {
-            if ((delay = s->at - now) <= 0) {
+            if (s->at <= now) {
                 callEvent(i);
                 delay = MAXINT / 1000;
                 /* Rescan incase event scheduled or modified an event */
                 i = -1;
+            } else {
+                delay = (int) min(s->at - now, MAXINT);
             }
             nextEvent = min(delay, nextEvent);
         }
@@ -298,7 +307,7 @@ WebsTime websRunEvents()
 
 
 /*
-    Allocating secure replacement for sprintf and vsprintf. 
+    Allocating secure replacement for sprintf and vsprintf.
  */
 PUBLIC char *sfmt(char *format, ...)
 {
@@ -505,11 +514,13 @@ static char *sprintfCore(char *buf, ssize maxsize, char *spec, va_list args)
                     //  UNICODE - not right wchar
                     safe = websEscapeHtml(va_arg(args, wchar*));
                     outWideString(&fmt, safe, -1);
+                    wfree(safe);
                 } else
 #endif
                 {
                     safe = websEscapeHtml(va_arg(args, char*));
                     outString(&fmt, safe, -1);
+                    wfree(safe);
                 }
                 break;
 
@@ -850,8 +861,8 @@ static void outFloat(Format *fmt, char specChar, double value)
 
 
 /*
-    Grow the buffer to fit new data. Return 1 if the buffer can grow. 
-    Grow using the growBy size specified when creating the buffer. 
+    Grow the buffer to fit new data. Return 1 if the buffer can grow.
+    Grow using the growBy size specified when creating the buffer.
  */
 static int growBuf(Format *fmt)
 {
@@ -944,6 +955,7 @@ PUBLIC void valueFree(WebsValue* v)
 }
 
 
+#if ME_GOAHEAD_LOGGING
 static void defaultLogHandler(int flags, char *buf)
 {
     char    prefix[ME_GOAHEAD_LIMIT_STRING];
@@ -990,7 +1002,7 @@ PUBLIC void assertError(WEBS_ARGS_DEC, char *fmt, ...)
     va_start(args, fmt);
     fmtBuf = sfmtv(fmt, args);
 
-    message = sfmt("Assertion %s, failed at %s %d\n", fmtBuf, WEBS_ARGS); 
+    message = sfmt("Assertion %s, failed at %s %d\n", fmtBuf, WEBS_ARGS);
     va_end(args);
     wfree(fmtBuf);
     if (logHandler) {
@@ -1030,7 +1042,7 @@ PUBLIC void traceProc(int level, char *fmt, ...)
 }
 
 
-PUBLIC int websGetLogLevel() 
+PUBLIC int websGetLogLevel()
 {
     return logLevel;
 }
@@ -1082,17 +1094,19 @@ PUBLIC int logOpen()
 
 PUBLIC void logClose()
 {
-    if (logFd >= 0) {
-        close(logFd);                                                                              
-        logFd = -1;                                                                                
-    }                                                                                                    
+#if !ME_ROM
+    if (logFd > 2) {
+        close(logFd);
+        logFd = -1;
+    }
+#endif
 }
 
 
 PUBLIC void logSetPath(char *path)
 {
     char  *lp;
-    
+
     wfree(logPath);
     logPath = sclone(path);
     if ((lp = strchr(logPath, ':')) != 0) {
@@ -1100,6 +1114,7 @@ PUBLIC void logSetPath(char *path)
         logLevel = atoi(lp);
     }
 }
+#endif
 
 
 /*
@@ -1124,7 +1139,7 @@ PUBLIC char *slower(char *string)
 }
 
 
-/* 
+/*
     Convert a string to upper case
  */
 PUBLIC char *supper(char *string)
@@ -1314,7 +1329,7 @@ PUBLIC int wallocObject(void *listArg, int *max, int size)
     return id;
 }
 
-    
+
 /*
     Create a new buf. "increment" is the amount to increase the size of the buf should it need to grow to accomodate
     data being added. "maxsize" is an upper limit (sanity level) beyond which the buffer must not grow. Set maxsize to -1 to
@@ -1325,7 +1340,7 @@ PUBLIC int bufCreate(WebsBuf *bp, int initSize, int maxsize)
     int increment;
 
     assert(bp);
-    
+
     if (initSize <= 0) {
         initSize = ME_GOAHEAD_LIMIT_BUFFER;
     }
@@ -1368,7 +1383,7 @@ PUBLIC void bufFree(WebsBuf *bp)
 
 /*
     Return the length of the data in the buf. Users must fill the queue to a high water mark of at most one less than
-    the queue size.  
+    the queue size.
  */
 PUBLIC ssize bufLen(WebsBuf *bp)
 {
@@ -1419,7 +1434,7 @@ PUBLIC int bufGetc(WebsBuf *bp)
 
 /*
     Add a char to the queue. Note if being used to store wide strings this does not add a trailing '\0'. Grow the buffer as
-    required.  
+    required.
  */
 PUBLIC int bufPutc(WebsBuf *bp, char c)
 {
@@ -1543,7 +1558,7 @@ PUBLIC int bufGetcA(WebsBuf *bp)
 
 
 /*
-    Add a byte to the queue. Note if being used to store strings this does not add a trailing '\0'. 
+    Add a byte to the queue. Note if being used to store strings this does not add a trailing '\0'.
     Grow the buffer as required.
  */
 PUBLIC int bufPutcA(WebsBuf *bp, char c)
@@ -1674,7 +1689,7 @@ PUBLIC ssize bufGetBlk(WebsBuf *bp, char *buf, ssize size)
 
 /*
     Return the maximum number of bytes the buffer can accept via a single block copy. Useful if the user is doing their
-    own data insertion. 
+    own data insertion.
  */
 PUBLIC ssize bufRoom(WebsBuf *bp)
 {
@@ -1682,7 +1697,7 @@ PUBLIC ssize bufRoom(WebsBuf *bp)
 
     assert(bp);
     assert(bp->buflen == (bp->endbuf - bp->buf));
-    
+
     space = bp->buflen - RINGQ_LEN(bp) - 1;
     in_a_line = bp->endbuf - bp->endp;
 
@@ -1692,7 +1707,7 @@ PUBLIC ssize bufRoom(WebsBuf *bp)
 
 /*
     Return the maximum number of bytes the buffer can provide via a single block copy. Useful if the user is doing their
-    own data retrieval.  
+    own data retrieval.
  */
 PUBLIC ssize bufGetBlkMax(WebsBuf *bp)
 {
@@ -1775,7 +1790,7 @@ PUBLIC void bufFlush(WebsBuf *bp)
 PUBLIC void bufCompact(WebsBuf *bp)
 {
     ssize   len;
-    
+
     if (bp->buf) {
         if ((len = bufLen(bp)) > 0) {
             if (bp->servp < bp->endp && bp->servp > bp->buf) {
@@ -1836,11 +1851,10 @@ PUBLIC bool bufGrow(WebsBuf *bp, ssize room)
     wfree((char*) bp->buf);
 
     bp->buflen += room;
-    bp->endp = newbuf;
-    bp->servp = newbuf;
     bp->buf = newbuf;
     bp->endbuf = &bp->buf[bp->buflen];
-    bufPutBlk(bp, newbuf, len);
+    bp->servp = newbuf;
+    bp->endp = &newbuf[len];
     return 1;
 }
 
@@ -1864,7 +1878,7 @@ static int  getBinBlockSize(int size)
 WebsHash hashCreate(int size)
 {
     WebsHash    sd;
-    HashTable      *tp;
+    HashTable   *tp;
 
     if (size < 0) {
         size = WEBS_SMALL_HASH;
@@ -1896,7 +1910,11 @@ WebsHash hashCreate(int size)
         Now create the hash table for fast indexing.
      */
     tp->size = calcPrime(size);
-    tp->hash_table = (WebsKey**) walloc(tp->size * sizeof(WebsKey*));
+    if ((tp->hash_table = (WebsKey**) walloc(tp->size * sizeof(WebsKey*))) == 0) {
+        wfreeHandle(&sym, sd);
+        wfree(tp);
+        return -1;
+    }
     assert(tp->hash_table);
     memset(tp->hash_table, 0, tp->size * sizeof(WebsKey*));
     return sd;
@@ -1905,11 +1923,11 @@ WebsHash hashCreate(int size)
 
 /*
     Close this symbol table. Call a cleanup function to allow the caller to free resources associated with each symbol
-    table entry.  
+    table entry.
  */
 PUBLIC void hashFree(WebsHash sd)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp, *forw;
     int         i;
 
@@ -1944,7 +1962,7 @@ PUBLIC void hashFree(WebsHash sd)
  */
 WebsKey *hashFirst(WebsHash sd)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp;
     int         i;
 
@@ -1969,7 +1987,7 @@ WebsKey *hashFirst(WebsHash sd)
  */
 WebsKey *hashNext(WebsHash sd, WebsKey *last)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp;
     int         i;
 
@@ -1999,7 +2017,7 @@ WebsKey *hashNext(WebsHash sd, WebsKey *last)
  */
 WebsKey *hashLookup(WebsHash sd, char *name)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp;
     char        *cp;
 
@@ -2023,6 +2041,17 @@ WebsKey *hashLookup(WebsHash sd, char *name)
 }
 
 
+void *hashLookupSymbol(WebsHash sd, char *name)
+{
+    WebsKey     *kp;
+
+    if ((kp = hashLookup(sd, name)) == 0) {
+        return 0;
+    }
+    return kp->content.value.symbol;
+}
+
+
 /*
     Enter a symbol into the table. If already there, update its value.  Always succeeds if memory available. We allocate
     a copy of "name" here so it can be a volatile variable. The value "v" is just a copy of the passed in value, so it
@@ -2030,7 +2059,7 @@ WebsKey *hashLookup(WebsHash sd, char *name)
  */
 WebsKey *hashEnter(WebsHash sd, char *name, WebsValue v, int arg)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp, *last;
     char        *cp;
     int         hindex;
@@ -2042,7 +2071,7 @@ WebsKey *hashEnter(WebsHash sd, char *name, WebsValue v, int arg)
 
     /*
         Calculate the first daisy-chain from the hash table. If non-zero, then we have daisy-chain, so scan it and look
-        for the symbol.  
+        for the symbol.
      */
     last = NULL;
     hindex = hashIndex(tp, name);
@@ -2071,8 +2100,7 @@ WebsKey *hashEnter(WebsHash sd, char *name, WebsValue v, int arg)
         /*
             Not found so allocate and append to the daisy-chain
          */
-        sp = (WebsKey*) walloc(sizeof(WebsKey));
-        if (sp == NULL) {
+        if ((sp = (WebsKey*) walloc(sizeof(WebsKey))) == 0) {
             return NULL;
         }
         sp->name = valueString(name, VALUE_ALLOCATE);
@@ -2086,8 +2114,7 @@ WebsKey *hashEnter(WebsHash sd, char *name, WebsValue v, int arg)
         /*
             Daisy chain is empty so we need to start the chain
          */
-        sp = (WebsKey*) walloc(sizeof(WebsKey));
-        if (sp == NULL) {
+        if ((sp = (WebsKey*) walloc(sizeof(WebsKey))) == 0) {
             return NULL;
         }
         tp->hash_table[hindex] = sp;
@@ -2108,7 +2135,7 @@ WebsKey *hashEnter(WebsHash sd, char *name, WebsValue v, int arg)
  */
 PUBLIC int hashDelete(WebsHash sd, char *name)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp, *last;
     char        *cp;
     int         hindex;
@@ -2120,7 +2147,7 @@ PUBLIC int hashDelete(WebsHash sd, char *name)
 
     /*
         Calculate the first daisy-chain from the hash table. If non-zero, then we have daisy-chain, so scan it and look
-        for the symbol.  
+        for the symbol.
      */
     last = NULL;
     hindex = hashIndex(tp, name);
@@ -2153,7 +2180,7 @@ PUBLIC int hashDelete(WebsHash sd, char *name)
 
 /*
     Hash a symbol and return a pointer to the hash daisy-chain list. All symbols reside on the chain (ie. none stored in
-    the hash table itself) 
+    the hash table itself)
  */
 static WebsKey *hash(HashTable *tp, char *name)
 {
@@ -2224,11 +2251,12 @@ static int calcPrime(int size)
 }
 
 
+#if DEPRECATE || 1
 /*
-    Convert a wide unicode string into a multibyte string buffer. If count is supplied, it is used as the source length 
-    in characters. Otherwise set to -1. DestCount is the max size of the dest buffer in bytes. At most destCount - 1 
-    characters will be stored. The dest buffer will always have a trailing null appended.  If dest is NULL, don't copy 
-    the string, just return the length of characters. Return a count of bytes copied to the destination or -1 if an 
+    Convert a wide unicode string into a multibyte string buffer. If count is supplied, it is used as the source length
+    in characters. Otherwise set to -1. DestCount is the max size of the dest buffer in bytes. At most destCount - 1
+    characters will be stored. The dest buffer will always have a trailing null appended.  If dest is NULL, don't copy
+    the string, just return the length of characters. Return a count of bytes copied to the destination or -1 if an
     invalid unicode sequence was provided in src.
     NOTE: does not allocate.
  */
@@ -2267,13 +2295,13 @@ PUBLIC ssize wtom(char *dest, ssize destCount, wchar *src, ssize count)
 
 /*
     Convert a multibyte string to a unicode string. If count is supplied, it is used as the source length in bytes.
-    Otherwise set to -1. DestCount is the max size of the dest buffer in characters. At most destCount - 1 
-    characters will be stored. The dest buffer will always have a trailing null characters appended.  If dest is NULL, 
-    don't copy the string, just return the length of characters. Return a count of characters copied to the destination 
+    Otherwise set to -1. DestCount is the max size of the dest buffer in characters. At most destCount - 1
+    characters will be stored. The dest buffer will always have a trailing null characters appended.  If dest is NULL,
+    don't copy the string, just return the length of characters. Return a count of characters copied to the destination
     or -1 if an invalid multibyte sequence was provided in src.
     NOTE: does not allocate.
  */
-PUBLIC ssize mtow(wchar *dest, ssize destCount, char *src, ssize count) 
+PUBLIC ssize mtow(wchar *dest, ssize destCount, char *src, ssize count)
 {
     ssize      len;
 
@@ -2325,8 +2353,6 @@ wchar *amtow(char *src, ssize *lenp)
 }
 
 
-//  FUTURE UNICODE - need a version that can supply a length
-
 PUBLIC char *awtom(wchar *src, ssize *lenp)
 {
     char    *dest;
@@ -2344,6 +2370,7 @@ PUBLIC char *awtom(wchar *src, ssize *lenp)
     }
     return dest;
 }
+#endif
 
 
 /*
@@ -2385,9 +2412,22 @@ PUBLIC char *sclone(char *s)
     if (s == NULL) {
         s = "";
     }
-    buf = walloc(strlen(s) + 1);
-    strcpy(buf, s);
+    if ((buf = walloc(strlen(s) + 1)) != 0) {
+        strcpy(buf, s);
+    }
     return buf;
+}
+
+
+PUBLIC bool snumber(cchar *s)
+{
+    if (!s) {
+        return 0;
+    }
+    if (*s == '-' || *s == '+') {
+        s++;
+    }
+    return s && *s && strspn(s, "1234567890") == strlen(s);
 }
 
 
@@ -2464,7 +2504,7 @@ PUBLIC ssize scopy(char *dest, ssize destMax, char *src)
 
 
 /*
-    This routine copies at most "count" characters from a string. It ensures the result is always null terminated and 
+    This routine copies at most "count" characters from a string. It ensures the result is always null terminated and
     the buffer does not overflow. Returns -1 if the buffer is too small.
  */
 PUBLIC ssize sncopy(char *dest, ssize destMax, char *src, ssize count)
@@ -2489,7 +2529,7 @@ PUBLIC ssize sncopy(char *dest, ssize destMax, char *src, ssize count)
     } else {
         *dest = '\0';
         len = 0;
-    } 
+    }
     return len;
 }
 
@@ -2683,7 +2723,7 @@ PUBLIC int websParseArgs(char *args, char **argv, int maxArgc)
         start = dest = src;
         if (*src == '"' || *src == '\'') {
             quote = *src;
-            src++; 
+            src++;
             dest++;
         } else {
             quote = 0;
@@ -2692,7 +2732,7 @@ PUBLIC int websParseArgs(char *args, char **argv, int maxArgc)
             argv[argc] = src;
         }
         while (*src) {
-            if (*src == '\\' && src[1] && (src[1] == '\\' || src[1] == '"' || src[1] == '\'')) { 
+            if (*src == '\\' && src[1] && (src[1] == '\\' || src[1] == '"' || src[1] == '\'')) {
                 src++;
             } else {
                 if (quote) {
@@ -2744,7 +2784,7 @@ PUBLIC int fmtAlloc(char **sp, int n, char *format, ...)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.

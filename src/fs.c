@@ -11,7 +11,11 @@
 /******************************** Local Data **********************************/
 
 #if ME_ROM
-static WebsHash romFs;             /* Symbol table for web pages */
+/* 
+    Symbol table for web pages and files
+ */
+static WebsHash romFs;
+static WebsRomIndex *lookup(WebsHash fs, char *path);
 #endif
 
 /*********************************** Code *************************************/
@@ -27,8 +31,7 @@ PUBLIC int websFsOpen()
     for (wip = websRomIndex; wip->path; wip++) {
         strncpy(name, wip->path, ME_GOAHEAD_LIMIT_FILENAME);
         len = strlen(name) - 1;
-        if (len > 0 &&
-            (name[len] == '/' || name[len] == '\\')) {
+        if (len > 0 && (name[len] == '/' || name[len] == '\\')) {
             name[len] = '\0';
         }
         hashEnter(romFs, name, valueSymbol(wip), 0);
@@ -50,12 +53,10 @@ PUBLIC int websOpenFile(char *path, int flags, int mode)
 {
 #if ME_ROM
     WebsRomIndex    *wip;
-    WebsKey         *sp;
 
-    if ((sp = hashLookup(romFs, path)) == NULL) {
+    if ((wip = lookup(romFs, path)) == NULL) {
         return -1;
     }
-    wip = (WebsRomIndex*) sp->content.value.symbol;
     wip->pos = 0;
     return (int) (wip - websRomIndex);
 #else
@@ -66,11 +67,11 @@ PUBLIC int websOpenFile(char *path, int flags, int mode)
 
 PUBLIC void websCloseFile(int fd)
 {
-    if (fd >= 0) {
 #if !ME_ROM
+    if (fd >= 0) {
         close(fd);
-#endif
     }
+#endif
 }
 
 
@@ -78,14 +79,12 @@ PUBLIC int websStatFile(char *path, WebsFileInfo *sbuf)
 {
 #if ME_ROM
     WebsRomIndex    *wip;
-    WebsKey         *sp;
 
     assert(path && *path);
 
-    if ((sp = hashLookup(romFs, path)) == NULL) {
+    if ((wip = lookup(romFs, path)) == NULL) {
         return -1;
     }
-    wip = (WebsRomIndex*) sp->content.value.symbol;
     memset(sbuf, 0, sizeof(WebsFileInfo));
     sbuf->size = wip->size;
     if (wip->page == NULL) {
@@ -97,12 +96,11 @@ PUBLIC int websStatFile(char *path, WebsFileInfo *sbuf)
     int         rc;
 #if ME_WIN_LIKE
     ssize       len = slen(path) - 1;
-
     path = sclone(path);
     if (path[len] == '/') {
         path[len] = '\0';
     } else if (path[len] == '\\') {
-        path[len - 1] = '\0';
+        path[len] = '\0';
     }
     rc = stat(path, &s);
     wfree(path);
@@ -114,8 +112,8 @@ PUBLIC int websStatFile(char *path, WebsFileInfo *sbuf)
     }
     sbuf->size = (ssize) s.st_size;
     sbuf->mtime = s.st_mtime;
-    sbuf->isDir = s.st_mode & S_IFDIR;                                                                     
-    return 0;  
+    sbuf->isDir = s.st_mode & S_IFDIR;
+    return 0;
 #endif
 }
 
@@ -214,13 +212,39 @@ PUBLIC ssize websWriteFile(int fd, char *buf, ssize size)
 }
 
 
+#if ME_ROM
+static WebsRomIndex *lookup(WebsHash fs, char *path)
+{
+    WebsKey     *sp;
+    ssize       len;
+
+    if ((sp = hashLookup(fs, path)) == NULL) {
+        if (path[0] != '/') {
+            path = sfmt("/%s", path);
+        } else {
+            path = sclone(path);
+        }
+        len = slen(path) - 1;
+        if (path[len] == '/') {
+            path[len] = '\0';
+        }
+        if ((sp = hashLookup(fs, path)) == NULL) {
+            wfree(path);
+            return 0;
+        }
+        wfree(path);
+    }
+    return (WebsRomIndex*) sp->content.value.symbol;
+}
+#endif
+
 /*
     @copy   default
 
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.

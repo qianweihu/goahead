@@ -2,40 +2,41 @@
 <html lang="en">
 <head>
     <title>Windows</title>
-    <!-- Copyright Embedthis Software. All Rights Reserved. -->
+    
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-    <meta charset="utf-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-    <meta name="description" content="Simple, fast, secure embedded web server" />
-    <link href='https://fonts.googleapis.com/css?family=Source+Sans+Pro:400,700|Open+Sans:300italic,400,300,700'
-        rel='stylesheet' type='text/css'>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+    <meta name="description" content="Simple, fast, secure embedded web server">
+    <link href='https://fonts.googleapis.com/css?family=Source+Sans+Pro:400,700|Open+Sans:300italic,400,300,700' rel='stylesheet' type='text/css'>
     <link href='https://fonts.googleapis.com/css?family=Julius+Sans+One' rel='stylesheet' type='text/css'>
-    <link href="../images/favicon.ico" rel="shortcut icon" />
-    <link href="../semantic-ui/semantic.css" rel="stylesheet" type="text/css" />
-    <link href="../css/all.css" rel="stylesheet" type="text/css" />
+    
+    <link href="../images/favicon.ico" rel="shortcut icon">
+    <link href="../lib/semantic-ui/semantic.min.css" rel="stylesheet" type="text/css">
+    <link href="../css/all.min.css" rel="stylesheet" type="text/css">
+    <link href="../css/api.min.css" rel="stylesheet" type="text/css">
     
 
-</head>
+
 <body class="show-sidebar">
         <div class="sidebar">
         <div class="ui large left vertical inverted labeled menu">
             <div class="item">
-                <a href="../index.html" class="logo">GoAhead Docs</a>
+                <a href="../" class="logo">GoAhead Docs</a>
             </div>
             <div class="item">
-                <a href="../index.html">
+                <a href="../">
                     <b>General</b>
                 </a>
                 <div class="menu">
-                    <a class="item" href="../index.html">GoAhead Overview</a>
+                    <a class="item" href="../">GoAhead Overview</a>
                     <a class="item" href="../users/features.html">GoAhead Features</a>
                     <a class="item" href="https://embedthis.com/goahead/download.html">Download</a> 
-                    <a class="item" href="../licensing/index.html">Licensing</a>
+                    <a class="item" href="../licensing/">Licensing</a>
                 </div>
             </div>
             <div class="item">
-                <a href="../start/index.html">
+                <a href="../start/">
                     <b>Getting Started</b>
                 </a>
                 <div class="menu">
@@ -48,7 +49,7 @@
                 </div>
             </div>
             <div class="item">
-                <a href="../users/index.html"><b>User's Guide</b></a>
+                <a href="../users/"><b>User's Guide</b></a>
                 <div class="menu">
                     <a class="item" href="../users/ports.html">Ports and Binding</a>
                     <a class="item" href="../users/routing.html">Routing Requests</a>
@@ -65,7 +66,7 @@
                 </div>
             </div>
             <div class="item">
-                <a href="../developers/index.html">Developer's Guide</a>
+                <a href="../developers/">Developer's Guide</a>
                 <div class="menu">
                     <a class="item" href="../developers/embedding.html">Embedding GoAhead</a>
                     <a class="item" href="../developers/handlers.html">Creating GoAhead Handlers</a>
@@ -75,7 +76,7 @@
                 </div>
             </div>
             <div class="item">
-                <a href="../ref/index.html">Reference Guide</a>
+                <a href="../ref/">Reference Guide</a>
                 <div class="menu">
                     <a class="item" href="../ref/compatibility.html">Compatibility</a>
                     <a class="item" href="../ref/native.html">API Library</a>
@@ -134,7 +135,7 @@
             <a class="section" href="../">Home</a>
             
             <div class="divider">/</div>
-            <a class="section" href="index.html">
+            <a class="section" href="../start/">
                 Getting Started
             </a>
             
@@ -163,26 +164,26 @@ goahead-VERSION-BUILD-MS-WIN-i686.exe.zip
             <p>The distribution image contains the binary distribution, documentation and development headers, and
             libraries in the one package. During installation you will have the option of installing the full package
             or portions of the distribution.</p><a id="exe"></a>
-            <h2 >Installing the EXE Image</h2>
+            <h2>Installing the EXE Image</h2>
             <ol>
                 <li>Login with administrator privileges.</li>
                 <li>Run winzip and extract the contents of the zipped EXE install image to a folder of your
                 choosing.</li>
                 <li>Browse to the location holding the EXE install image and run it.</li>
             </ol><a id="removing"></a>
-            <h2 >Removing GoAhead</h2>
+            <h2>Removing GoAhead</h2>
             <ol>
                 <li>Login with administrator privileges.</li>
                 <li>Run the <b>Add / Remove Programs</b> applet from the <b>control panel</b>.</li>
                 <li>Select <b>Embedthis GoAhead</b> and choose remove.</li>
             </ol><a id="silentInstallation"></a>
-            <h2 >Silent Installation</h2>
+            <h2>Silent Installation</h2>
             <p>If you need to do batch or unattended installations, you can install GoAhead silently. Use the
             <b>/silent</b> switch to suppress questions and <b>/verysilent</b> to suppress all visual
             output.</p>
 
             <a name="running"></a>
-            <h2 >Running GoAhead</h2>
+            <h2>Running GoAhead</h2>
             <p>To start GoAhead type:</p>
             <pre class="ui code segment">
 cd \Program Files\Embedthis GoAhead
@@ -201,32 +202,12 @@ bin\goahead --help
         <p>&copy; Embedthis Software, 2003-2015. All rights reserved.</p>
     </div>
 
-    <script src="../jquery/jquery.min.js"></script>
-    <script src="../semantic-ui/semantic.js"></script>
-    <script>
-        var sl = $('.sidebar-launch');
-        $('.sidebar-launch').click(function() {
-            var body = $('body');
-            if (!body.hasClass('show-sidebar')) {
-                body.addClass('show-sidebar');
-                $('.sidebar').css('visibility', 'visible');
-            } else {
-                body.removeClass('show-sidebar');
-                $('.sidebar').css('visibility', 'hidden');
-            }
-        });
-        $('.sidebar a.item').click(function(e) {
-            sessionStorage.setItem('scroll-top', $('.sidebar').scrollTop());
-        });
-        $(function() {
-            var url = '../start/windows.html';
-            var active = $('.sidebar a[href="' + url +'"]');
-            active.addClass('active');
-            $('.sidebar').scrollTop(sessionStorage.getItem('scroll-top'));
-        });
-    </script> 
+    <script src="../lib/jquery/jquery.min.js"></script>
+    <script src="../lib/semantic-ui/semantic.min.js"></script>
+    <script src="../scripts/sidebar.min.js"></script>
+     
 
         
 
-</body>
-</html>
+
+

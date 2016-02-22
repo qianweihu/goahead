@@ -1,6 +1,6 @@
 /*
     js.c -- Mini JavaScript
-  
+
     Copyright (c) All Rights Reserved. See details at the end of the file.
  */
 
@@ -139,12 +139,12 @@ PUBLIC char *jsEvalFile(int jid, char *path, char **emsg)
     }
     if (stat(path, &sbuf) < 0) {
         close(fd);
-        jsError(ep, "Cant stat %s", path);
+        jsError(ep, "Cannot stat %s", path);
         return NULL;
     }
     if ((script = walloc(sbuf.st_size + 1)) == NULL) {
         close(fd);
-        jsError(ep, "Cant malloc %d", sbuf.st_size);
+        jsError(ep, "Cannot allocate %d", sbuf.st_size);
         return NULL;
     }
     if (read(fd, script, sbuf.st_size) != (int)sbuf.st_size) {
@@ -228,13 +228,13 @@ PUBLIC char *jsEval(int jid, char *script, char **emsg)
     int     state;
     void    *endlessLoopTest;
     int     loopCounter;
-    
-    
+
+
     assert(script);
 
     if (emsg) {
         *emsg = NULL;
-    } 
+    }
     if ((ep = jsPtr(jid)) == NULL) {
         return NULL;
     }
@@ -532,6 +532,7 @@ static int parseStmt(Js *ep, int state, int flags)
             setString(&ep->result, "");
             if (jsLexGetToken(ep, state) != TOK_LPAREN) {
                 freeFunc(&func);
+                ep->func = saveFunc;
                 goto error;
             }
             if (parse(ep, STATE_ARG_LIST, flags) != STATE_ARG_LIST_DONE) {
@@ -646,7 +647,7 @@ static int parseStmt(Js *ep, int state, int flags)
 
             /*
                 The first time through, we save the current input context just to each step: prior to the conditional,
-                the loop increment and the loop body.  
+                the loop increment and the loop body.
              */
             jsLexSaveInputState(ep, &condScript);
             if (parse(ep, STATE_COND, flags) != STATE_COND_DONE) {
@@ -842,7 +843,7 @@ static int parseDeclaration(Js *ep, int state, int flags)
                 var x;
                 var x, y, z;
                 var x = 1 + 2 / 3, y = 2 + 4;
-      
+
         We set the variable to NULL if there is no associated assignment.
      */
     do {
@@ -988,7 +989,7 @@ static int parseExpr(Js *ep, int state, int flags)
     do {
         /*
             This loop will handle an entire expression list. We call parse to evalutate each term which returns the
-            result in ep->result.  
+            result in ep->result.
          */
         if (tid == TOK_LOGICAL) {
             if ((state = parse(ep, STATE_RELEXP, flags)) != STATE_RELEXP_DONE) {
@@ -1364,9 +1365,9 @@ PUBLIC void *jsGetGlobalFunction(int jid, char *name)
 /*
     Utility routine to crack Javascript arguments. Return the number of args
     seen. This routine only supports %s and %d type args.
-  
+
     Typical usage:
-  
+
         if (jsArgs(argc, argv, "%s %d", &name, &age) < 2) {
             error("Insufficient args");
             return -1;
@@ -1469,7 +1470,7 @@ PUBLIC char *jsGetResult(int jid)
 
 /*
     Set a variable. Note: a variable with a value of NULL means declared but undefined. The value is defined in the
-    top-most variable frame.  
+    top-most variable frame.
  */
 PUBLIC void jsSetVar(int jid, char *var, char *value)
 {
@@ -1492,7 +1493,7 @@ PUBLIC void jsSetVar(int jid, char *var, char *value)
 
 /*
     Set a local variable. Note: a variable with a value of NULL means declared but undefined. The value is defined in
-    the top-most variable frame.  
+    the top-most variable frame.
  */
 PUBLIC void jsSetLocalVar(int jid, char *var, char *value)
 {
@@ -1515,7 +1516,7 @@ PUBLIC void jsSetLocalVar(int jid, char *var, char *value)
 
 /*
     Set a global variable. Note: a variable with a value of NULL means declared but undefined. The value is defined in
-    the global variable frame.  
+    the global variable frame.
  */
 PUBLIC void jsSetGlobalVar(int jid, char *var, char *value)
 {
@@ -2053,7 +2054,7 @@ static int getLexicalToken(Js *ep, int state)
             }
             return TOK_LITERAL;
 
-        case '0': case '1': case '2': case '3': case '4': 
+        case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':
             do {
                 if (tokenAddChar(ep, c) < 0) {
@@ -2107,9 +2108,9 @@ static int getLexicalToken(Js *ep, int state)
                     return TOK_RETURN;
                 }
             }
-            /* 
+            /*
                 Skip white space after token to find out whether this is a function or not.
-             */ 
+             */
             while (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
                 if ((c = inputGetc(ep)) < 0)
                     break;
@@ -2250,7 +2251,7 @@ static int charConvert(Js *ep, int base, int maxDig)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.

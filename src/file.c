@@ -1,6 +1,6 @@
 /*
     file.c -- File handler
-  
+
     This module serves static file documents
  */
 
@@ -20,6 +20,7 @@ static void fileWriteEvent(Webs *wp);
 /*********************************** Code *************************************/
 /*
     Serve static files
+    Return true to indicate the request was handled, even for errors.
  */
 static bool fileHandler(Webs *wp)
 {
@@ -44,7 +45,7 @@ static bool fileHandler(Webs *wp)
         /* Code is already set for us by processContent() */
         websResponse(wp, wp->code, 0);
 
-    } else 
+    } else
 #endif /* !ME_ROM */
     {
         /*
@@ -138,7 +139,7 @@ static void fileWriteEvent(Webs *wp)
 
 
 #if !ME_ROM
-PUBLIC int websProcessPutData(Webs *wp)
+PUBLIC bool websProcessPutData(Webs *wp)
 {
     ssize   nbytes;
 
@@ -150,14 +151,12 @@ PUBLIC int websProcessPutData(Webs *wp)
     wp->putLen += nbytes;
     if (wp->putLen > ME_GOAHEAD_LIMIT_PUT) {
         websError(wp, HTTP_CODE_REQUEST_TOO_LARGE | WEBS_CLOSE, "Put file too large");
-        return -1;
-    }
-    if (write(wp->putfd, wp->input.servp, (int) nbytes) != nbytes) {
+
+    } else if (write(wp->putfd, wp->input.servp, (int) nbytes) != nbytes) {
         websError(wp, HTTP_CODE_INTERNAL_SERVER_ERROR | WEBS_CLOSE, "Cannot write to file");
-        return -1;
     }
     websConsumeInput(wp, nbytes);
-    return 0;
+    return 1;
 }
 #endif
 
@@ -225,7 +224,7 @@ PUBLIC void websSetDocuments(char *dir)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.

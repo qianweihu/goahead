@@ -16,8 +16,17 @@
 
 #include    "goahead.h"
 
-#if ME_GOAHEAD_REPLACE_MALLOC
+/********************************** Locals ************************************/
+
+static WebsMemNotifier memNotifier;
+
+PUBLIC void websSetMemNotifier(WebsMemNotifier cback)
+{
+    memNotifier = cback;
+}
+
 /********************************* Defines ************************************/
+#if ME_GOAHEAD_REPLACE_MALLOC
 /*
     ROUNDUP4(size) returns the next higher integer value of size that is divisible by 4, or the value of size if size is
     divisible by 4. ROUNDUP4() is used in aligning memory allocations on 4-byte boundaries.
@@ -36,13 +45,13 @@ static int          freeLeft;                           /* Size of free left for
 static int          controlFlags = WEBS_USE_MALLOC;     /* Default to auto-malloc */
 static int          wopenCount = 0;                     /* Num tasks using walloc */
 
-/*************************** Forward Declarations *****************************/
-
 static int wallocGetSize(ssize size, int *q);
+
+#endif /* ME_GOAHEAD_REPLACE_MALLOC */
 
 /********************************** Code **************************************/
 /*
-    Initialize the walloc module. wopenAlloc should be called the very first thing after the application starts and 
+    Initialize the walloc module. wopenAlloc should be called the very first thing after the application starts and
     wcloseAlloc should be called the last thing before exiting. If wopenAlloc is not called, it will be called on the first
     allocation with default values. "buf" points to memory to use of size "bufsize". If buf is NULL, memory is allocated
     using malloc. flags may be set to WEBS_USE_MALLOC if using malloc is okay. This routine will allocate *  an initial
@@ -50,6 +59,7 @@ static int wallocGetSize(ssize size, int *q);
  */
 PUBLIC int wopenAlloc(void *buf, int bufsize, int flags)
 {
+#if ME_GOAHEAD_REPLACE_MALLOC
     controlFlags = flags;
 
     /*
@@ -64,7 +74,7 @@ PUBLIC int wopenAlloc(void *buf, int bufsize, int flags)
         }
         bufsize = ROUNDUP4(bufsize);
         if ((buf = malloc(bufsize)) == NULL) {
-            /* 
+            /*
                 Resetting wopenCount so client code can decide to call wopenAlloc() again with a smaller memory request.
             */
              --wopenCount;
@@ -76,26 +86,30 @@ PUBLIC int wopenAlloc(void *buf, int bufsize, int flags)
     freeSize = freeLeft = bufsize;
     freeBuf = freeNext = buf;
     memset(qhead, 0, sizeof(qhead));
+#endif /* ME_GOAHEAD_REPLACE_MALLOC */
     return 0;
 }
 
 
 PUBLIC void wcloseAlloc()
 {
+#if ME_GOAHEAD_REPLACE_MALLOC
     if (--wopenCount <= 0 && !(controlFlags & WEBS_USER_BUF)) {
         free(freeBuf);
         wopenCount = 0;
     }
+#endif /* ME_GOAHEAD_REPLACE_MALLOC */
 }
 
 
+#if ME_GOAHEAD_REPLACE_MALLOC
 /*
     Allocate a block of the requested size. First check the block queues for a suitable one.
  */
 PUBLIC void *walloc(ssize size)
 {
     WebsAlloc   *bp;
-    int     q, memSize;
+    int         q, memSize;
 
     /*
         Call wopen with default values if the application has not yet done so
@@ -118,11 +132,15 @@ PUBLIC void *walloc(ssize size)
             memSize = ROUNDUP4(memSize);
             bp = (WebsAlloc*) malloc(memSize);
             if (bp == NULL) {
-                printf("B: malloc failed\n");
+                if (memNotifier) {
+                    (memNotifier)(memSize);
+                }
                 return NULL;
             }
         } else {
-            printf("B: malloc failed\n");
+            if (memNotifier) {
+                (memNotifier)(memSize);
+            }
             return NULL;
         }
         /*
@@ -156,14 +174,18 @@ PUBLIC void *walloc(ssize size)
              */
             memSize = ROUNDUP4(memSize);
             if ((bp = (WebsAlloc*) malloc(memSize)) == NULL) {
-                printf("B: malloc failed\n");
+                if (memNotifier) {
+                    (memNotifier)(memSize);
+                }
                 return NULL;
             }
             bp->u.size = memSize - sizeof(WebsAlloc);
             bp->flags = WEBS_MALLOCED;
 
         } else {
-            printf("B: malloc failed\n");
+            if (memNotifier) {
+                (memNotifier)(memSize);
+            }
             return NULL;
         }
     }
@@ -174,12 +196,12 @@ PUBLIC void *walloc(ssize size)
 
 /*
     Free a block back to the relevant free q. We don't free back to the O/S or run time system unless the block is
-    greater than the maximum class size. We also do not coalesce blocks.  
+    greater than the maximum class size. We also do not coalesce blocks.
  */
 PUBLIC void wfree(void *mp)
 {
     WebsAlloc   *bp;
-    int     q;
+    int         q;
 
     if (mp == 0) {
         return;
@@ -251,13 +273,54 @@ static int wallocGetSize(ssize size, int *q)
 
 #else /* !ME_GOAHEAD_REPLACE_MALLOC */
 
-/*
-    Stubs
- */
-PUBLIC int wopenAlloc(void *buf, int bufsize, int flags) { return 0; }
-PUBLIC void wcloseAlloc() { }
+PUBLIC void *walloc(ssize num) 
+{
+    void    *mem;
+
+    if ((mem = malloc(num)) == 0) {
+        if (memNotifier) {
+            (memNotifier)(num);
+        }
+    }
+    return mem;
+}
+
+
+PUBLIC void wfree(void *mem) 
+{
+    if (mem) { 
+        free(mem); 
+    }   
+}
+
+
+PUBLIC void *wrealloc(void *mem, ssize num) 
+{
+    void    *old;
+
+    old = mem;
+    if ((mem = realloc(mem, num)) == 0) {
+        if (memNotifier) {
+            (memNotifier)(num);
+        }
+        free(old);
+    }
+    return mem;  
+}
 
 #endif /* ME_GOAHEAD_REPLACE_MALLOC */
+
+
+PUBLIC void *wdup(cvoid *ptr, size_t usize)
+{
+    char    *newp;
+
+    if ((newp = walloc(usize)) != 0) {
+        memcpy(newp, ptr, usize);
+    }
+    return newp;
+}
+
 
 /*
     @copy   default
@@ -265,7 +328,7 @@ PUBLIC void wcloseAlloc() { }
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.

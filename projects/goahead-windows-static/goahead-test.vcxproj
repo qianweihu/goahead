@@ -3,6 +3,7 @@
 
       <ItemDefinitionGroup>
         <ClCompile>
+          <PreprocessorDefinitions>ME_DEBUG=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
           <AdditionalIncludeDirectories>$(IncDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -118,7 +119,7 @@
 
     <ItemGroup>
       <ProjectReference Include="libgo.vcxproj">
-      <Project>7c17e307-cdf0-42ab-ac16-79c2b0661e35</Project>
+      <Project>2c29bee3-a1d1-494b-b20d-cd1dac24543f</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
       </ProjectReference>
     </ItemGroup>

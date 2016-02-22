@@ -32,6 +32,7 @@ static WebsHash actionTable = -1;            /* Symbol table for actions */
 /************************************* Code ***********************************/
 /*
     Process an action request. Returns 1 always to indicate it handled the URL
+    Return true to indicate the request was handled, even for errors.
  */
 static bool actionHandler(Webs *wp)
 {
@@ -137,7 +138,7 @@ PUBLIC void websFooter(Webs *wp)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -174,8 +175,17 @@ PUBLIC void websFooter(Webs *wp)
 
 
 
-#if ME_GOAHEAD_REPLACE_MALLOC
+/********************************** Locals ************************************/
+
+static WebsMemNotifier memNotifier;
+
+PUBLIC void websSetMemNotifier(WebsMemNotifier cback)
+{
+    memNotifier = cback;
+}
+
 /********************************* Defines ************************************/
+#if ME_GOAHEAD_REPLACE_MALLOC
 /*
     ROUNDUP4(size) returns the next higher integer value of size that is divisible by 4, or the value of size if size is
     divisible by 4. ROUNDUP4() is used in aligning memory allocations on 4-byte boundaries.
@@ -194,13 +204,13 @@ static int          freeLeft;                           /* Size of free left for
 static int          controlFlags = WEBS_USE_MALLOC;     /* Default to auto-malloc */
 static int          wopenCount = 0;                     /* Num tasks using walloc */
 
-/*************************** Forward Declarations *****************************/
-
 static int wallocGetSize(ssize size, int *q);
+
+#endif /* ME_GOAHEAD_REPLACE_MALLOC */
 
 /********************************** Code **************************************/
 /*
-    Initialize the walloc module. wopenAlloc should be called the very first thing after the application starts and 
+    Initialize the walloc module. wopenAlloc should be called the very first thing after the application starts and
     wcloseAlloc should be called the last thing before exiting. If wopenAlloc is not called, it will be called on the first
     allocation with default values. "buf" points to memory to use of size "bufsize". If buf is NULL, memory is allocated
     using malloc. flags may be set to WEBS_USE_MALLOC if using malloc is okay. This routine will allocate *  an initial
@@ -208,6 +218,7 @@ static int wallocGetSize(ssize size, int *q);
  */
 PUBLIC int wopenAlloc(void *buf, int bufsize, int flags)
 {
+#if ME_GOAHEAD_REPLACE_MALLOC
     controlFlags = flags;
 
     /*
@@ -222,7 +233,7 @@ PUBLIC int wopenAlloc(void *buf, int bufsize, int flags)
         }
         bufsize = ROUNDUP4(bufsize);
         if ((buf = malloc(bufsize)) == NULL) {
-            /* 
+            /*
                 Resetting wopenCount so client code can decide to call wopenAlloc() again with a smaller memory request.
             */
              --wopenCount;
@@ -234,26 +245,30 @@ PUBLIC int wopenAlloc(void *buf, int bufsize, int flags)
     freeSize = freeLeft = bufsize;
     freeBuf = freeNext = buf;
     memset(qhead, 0, sizeof(qhead));
+#endif /* ME_GOAHEAD_REPLACE_MALLOC */
     return 0;
 }
 
 
 PUBLIC void wcloseAlloc()
 {
+#if ME_GOAHEAD_REPLACE_MALLOC
     if (--wopenCount <= 0 && !(controlFlags & WEBS_USER_BUF)) {
         free(freeBuf);
         wopenCount = 0;
     }
+#endif /* ME_GOAHEAD_REPLACE_MALLOC */
 }
 
 
+#if ME_GOAHEAD_REPLACE_MALLOC
 /*
     Allocate a block of the requested size. First check the block queues for a suitable one.
  */
 PUBLIC void *walloc(ssize size)
 {
     WebsAlloc   *bp;
-    int     q, memSize;
+    int         q, memSize;
 
     /*
         Call wopen with default values if the application has not yet done so
@@ -276,11 +291,15 @@ PUBLIC void *walloc(ssize size)
             memSize = ROUNDUP4(memSize);
             bp = (WebsAlloc*) malloc(memSize);
             if (bp == NULL) {
-                printf("B: malloc failed\n");
+                if (memNotifier) {
+                    (memNotifier)(memSize);
+                }
                 return NULL;
             }
         } else {
-            printf("B: malloc failed\n");
+            if (memNotifier) {
+                (memNotifier)(memSize);
+            }
             return NULL;
         }
         /*
@@ -314,14 +333,18 @@ PUBLIC void *walloc(ssize size)
              */
             memSize = ROUNDUP4(memSize);
             if ((bp = (WebsAlloc*) malloc(memSize)) == NULL) {
-                printf("B: malloc failed\n");
+                if (memNotifier) {
+                    (memNotifier)(memSize);
+                }
                 return NULL;
             }
             bp->u.size = memSize - sizeof(WebsAlloc);
             bp->flags = WEBS_MALLOCED;
 
         } else {
-            printf("B: malloc failed\n");
+            if (memNotifier) {
+                (memNotifier)(memSize);
+            }
             return NULL;
         }
     }
@@ -332,12 +355,12 @@ PUBLIC void *walloc(ssize size)
 
 /*
     Free a block back to the relevant free q. We don't free back to the O/S or run time system unless the block is
-    greater than the maximum class size. We also do not coalesce blocks.  
+    greater than the maximum class size. We also do not coalesce blocks.
  */
 PUBLIC void wfree(void *mp)
 {
     WebsAlloc   *bp;
-    int     q;
+    int         q;
 
     if (mp == 0) {
         return;
@@ -409,13 +432,54 @@ static int wallocGetSize(ssize size, int *q)
 
 #else /* !ME_GOAHEAD_REPLACE_MALLOC */
 
-/*
-    Stubs
- */
-PUBLIC int wopenAlloc(void *buf, int bufsize, int flags) { return 0; }
-PUBLIC void wcloseAlloc() { }
+PUBLIC void *walloc(ssize num) 
+{
+    void    *mem;
+
+    if ((mem = malloc(num)) == 0) {
+        if (memNotifier) {
+            (memNotifier)(num);
+        }
+    }
+    return mem;
+}
+
+
+PUBLIC void wfree(void *mem) 
+{
+    if (mem) { 
+        free(mem); 
+    }   
+}
+
+
+PUBLIC void *wrealloc(void *mem, ssize num) 
+{
+    void    *old;
+
+    old = mem;
+    if ((mem = realloc(mem, num)) == 0) {
+        if (memNotifier) {
+            (memNotifier)(num);
+        }
+        free(old);
+    }
+    return mem;  
+}
 
 #endif /* ME_GOAHEAD_REPLACE_MALLOC */
+
+
+PUBLIC void *wdup(cvoid *ptr, size_t usize)
+{
+    char    *newp;
+
+    if ((newp = walloc(usize)) != 0) {
+        memcpy(newp, ptr, usize);
+    }
+    return newp;
+}
+
 
 /*
     @copy   default
@@ -423,7 +487,7 @@ PUBLIC void wcloseAlloc() { }
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -449,13 +513,13 @@ PUBLIC void wcloseAlloc() { }
 
     In this scheme Users have passwords and can have multiple roles. A role is associated with the ability to do
     things like "admin" or "user" or "support". A role may have abilities (which are typically verbs) like "add",
-    "shutdown". 
+    "shutdown".
 
-    When the web server starts up, it loads a route and authentication configuration file that specifies the Users, 
+    When the web server starts up, it loads a route and authentication configuration file that specifies the Users,
     Roles and Routes.  Routes specify the required abilities to access URLs by specifying the URL prefix. Once logged
     in, the user's abilities are tested against the route abilities. When the web server receivess a request, the set of
     Routes is consulted to select the best route. If the routes requires abilities, the user must be logged in and
-    authenticated. 
+    authenticated.
 
     Three authentication backend protocols are supported:
         HTTP basic authentication which uses browser dialogs and clear text passwords (insecure unless over TLS)
@@ -542,6 +606,7 @@ PUBLIC bool websAuthenticate(Webs *wp)
          */
         if ((username = (char*) websGetSessionVar(wp, WEBS_SESSION_USERNAME, 0)) != 0) {
             cached = 1;
+            wfree(wp->username);
             wp->username = sclone(username);
         }
     }
@@ -570,10 +635,10 @@ PUBLIC bool websAuthenticate(Webs *wp)
             return 0;
         }
         /*
-            Store authentication state and user in session storage                                         
-         */                                                                                                
-        if (websGetSession(wp, 1) != 0) {                                                    
-            websSetSessionVar(wp, WEBS_SESSION_USERNAME, wp->username);                                
+            Store authentication state and user in session storage
+         */
+        if (websGetSession(wp, 1) != 0) {
+            websSetSessionVar(wp, WEBS_SESSION_USERNAME, wp->username);
         }
     }
     return 1;
@@ -583,7 +648,7 @@ PUBLIC bool websAuthenticate(Webs *wp)
 PUBLIC int websOpenAuth(int minimal)
 {
     char    sbuf[64];
-    
+
     assert(minimal == 0 || minimal == 1);
 
     if ((users = hashCreate(-1)) < 0) {
@@ -612,7 +677,7 @@ PUBLIC int websOpenAuth(int minimal)
 }
 
 
-PUBLIC void websCloseAuth() 
+PUBLIC void websCloseAuth()
 {
     WebsKey     *key, *next;
 
@@ -650,6 +715,7 @@ PUBLIC int websWriteAuthFile(char *path)
     tempFile = websTempFile(NULL, NULL);
     if ((fp = fopen(tempFile, "w" FILE_TEXT)) == 0) {
         error("Cannot open %s", tempFile);
+        wfree(tempFile);
         return -1;
     }
     fprintf(fp, "#\n#   %s - Authorization data\n#\n\n", basename(path));
@@ -676,8 +742,10 @@ PUBLIC int websWriteAuthFile(char *path)
     unlink(path);
     if (rename(tempFile, path) < 0) {
         error("Cannot create new %s", path);
+        wfree(tempFile);
         return -1;
     }
+    wfree(tempFile);
     return 0;
 }
 #endif
@@ -723,10 +791,10 @@ WebsUser *websAddUser(char *username, char *password, char *roles)
 }
 
 
-PUBLIC int websRemoveUser(char *username) 
+PUBLIC int websRemoveUser(char *username)
 {
     WebsKey     *key;
-    
+
     assert(username);
     if ((key = hashLookup(users, username)) != 0) {
         freeUser(key->content.value.symbol);
@@ -889,7 +957,7 @@ static void freeRole(WebsRole *rp)
 /*
     Does not recompute abilities for users that use this role
  */
-PUBLIC int websRemoveRole(char *name) 
+PUBLIC int websRemoveRole(char *name)
 {
     WebsRole    *rp;
     WebsKey     *sym;
@@ -940,7 +1008,7 @@ PUBLIC bool websLoginUser(Webs *wp, char *username, char *password)
         return 0;
     }
     trace(2, "Login successful for %s", username);
-    websSetSessionVar(wp, WEBS_SESSION_USERNAME, wp->username);                                
+    websSetSessionVar(wp, WEBS_SESSION_USERNAME, wp->username);
     return 1;
 }
 
@@ -968,7 +1036,7 @@ static void loginServiceProc(Webs *wp)
     assert(wp);
     route = wp->route;
     assert(route);
-    
+
     if (websLoginUser(wp, websGetVar(wp, "username", ""), websGetVar(wp, "password", ""))) {
         /* If the application defines a referrer session var, redirect to that */
         char *referrer;
@@ -1061,7 +1129,7 @@ PUBLIC bool websVerifyPasswordFromPam(Webs *wp)
     struct pam_conv     conv = { pamChat, &info };
     struct group        *gp;
     int                 res, i;
-   
+
     assert(wp);
     assert(wp->username && wp->username);
     assert(wp->password);
@@ -1087,8 +1155,8 @@ PUBLIC bool websVerifyPasswordFromPam(Webs *wp)
     if (!wp->user) {
         Gid     groups[32];
         int     ngroups;
-        /* 
-            Create a temporary user with a abilities set to the groups 
+        /*
+            Create a temporary user with a abilities set to the groups
          */
         ngroups = sizeof(groups) / sizeof(Gid);
         if ((i = getgrouplist(wp->username, 99999, groups, &ngroups)) >= 0) {
@@ -1111,15 +1179,15 @@ PUBLIC bool websVerifyPasswordFromPam(Webs *wp)
 }
 
 
-/*  
+/*
     Callback invoked by the pam_authenticate function
  */
-static int pamChat(int msgCount, const struct pam_message **msg, struct pam_response **resp, void *data) 
+static int pamChat(int msgCount, const struct pam_message **msg, struct pam_response **resp, void *data)
 {
     UserInfo                *info;
     struct pam_response     *reply;
     int                     i;
-    
+
     i = 0;
     reply = 0;
     info = (UserInfo*) data;
@@ -1133,7 +1201,7 @@ static int pamChat(int msgCount, const struct pam_message **msg, struct pam_resp
     for (i = 0; i < msgCount; i++) {
         reply[i].resp_retcode = 0;
         reply[i].resp = 0;
-        
+
         switch (msg[i]->msg_style) {
         case PAM_PROMPT_ECHO_ON:
             reply[i].resp = sclone(info->name);
@@ -1166,7 +1234,7 @@ static int jsCan(int jsid, Webs *wp, int argc, char **argv)
         return 0;
     }
     return 1;
-} 
+}
 #endif
 
 
@@ -1184,6 +1252,8 @@ static bool parseBasicDetails(Webs *wp)
             *cp++ = '\0';
         }
     }
+    wfree(wp->username);
+    wfree(wp->password);
     if (cp) {
         wp->username = sclone(userAuth);
         wp->password = sclone(cp);
@@ -1208,6 +1278,7 @@ static void digestLogin(Webs *wp)
     nonce = createDigestNonce(wp);
     /* Opaque is unused. Set to anything */
     opaque = "5ccc069c403ebaf9f0171e9517f40e41";
+    wfree(wp->authResponse);
     wp->authResponse = sfmt(
         "Digest realm=\"%s\", domain=\"%s\", qop=\"%s\", nonce=\"%s\", opaque=\"%s\", algorithm=\"%s\", stale=\"%s\"",
         ME_GOAHEAD_REALM, websGetServerUrl(), "auth", nonce, opaque, "MD5", "FALSE");
@@ -1283,6 +1354,7 @@ static bool parseDigestDetails(Webs *wp)
 
         case 'c':
             if (scaselesscmp(key, "cnonce") == 0) {
+                wfree(wp->cnonce);
                 wp->cnonce = sclone(value);
             }
             break;
@@ -1295,29 +1367,35 @@ static bool parseDigestDetails(Webs *wp)
 
         case 'n':
             if (scaselesscmp(key, "nc") == 0) {
+                wfree(wp->nc);
                 wp->nc = sclone(value);
             } else if (scaselesscmp(key, "nonce") == 0) {
+                wfree(wp->nonce);
                 wp->nonce = sclone(value);
             }
             break;
 
         case 'o':
             if (scaselesscmp(key, "opaque") == 0) {
+                wfree(wp->opaque);
                 wp->opaque = sclone(value);
             }
             break;
 
         case 'q':
             if (scaselesscmp(key, "qop") == 0) {
+                wfree(wp->qop);
                 wp->qop = sclone(value);
             }
             break;
 
         case 'r':
             if (scaselesscmp(key, "realm") == 0) {
+                wfree(wp->realm);
                 wp->realm = sclone(value);
             } else if (scaselesscmp(key, "response") == 0) {
                 /* Store the response digest in the password field. This is MD5(user:realm:password) */
+                wfree(wp->password);
                 wp->password = sclone(value);
                 wp->encoded = 1;
             }
@@ -1327,11 +1405,13 @@ static bool parseDigestDetails(Webs *wp)
             if (scaselesscmp(key, "stale") == 0) {
                 break;
             }
-        
+
         case 'u':
             if (scaselesscmp(key, "uri") == 0) {
+                wfree(wp->digestUri);
                 wp->digestUri = sclone(value);
             } else if (scaselesscmp(key, "username") == 0 || scaselesscmp(key, "user") == 0) {
+                wfree(wp->username);
                 wp->username = sclone(value);
             }
             break;
@@ -1391,6 +1471,7 @@ static bool parseDigestDetails(Webs *wp)
         }
     }
     wfree(decoded);
+    wfree(wp->digest);
     wp->digest = calcDigest(wp, 0, wp->user->password);
     return 1;
 }
@@ -1414,16 +1495,16 @@ static char *createDigestNonce(Webs *wp)
 
 static char *parseDigestNonce(char *nonce, char **secret, char **realm, WebsTime *when)
 {
-    char    *tok, *decoded, *whenStr;                                                                      
-                                                                                                           
+    char    *tok, *decoded, *whenStr;
+
     assert(nonce && *nonce);
     assert(secret);
     assert(realm);
     assert(when);
 
-    if ((decoded = websDecode64(nonce)) == 0) {                                                             
+    if ((decoded = websDecode64(nonce)) == 0) {
         return 0;
-    }                                                                                                      
+    }
     *secret = stok(decoded, ":", &tok);
     *realm = stok(NULL, ":", &tok);
     whenStr = stok(NULL, ":", &tok);
@@ -1444,7 +1525,7 @@ static char *calcDigest(Webs *wp, char *username, char *password)
     assert(password);
 
     /*
-        Compute HA1. If username == 0, then the password is already expected to be in the HA1 format 
+        Compute HA1. If username == 0, then the password is already expected to be in the HA1 format
         (MD5(username:realm:password).
      */
     if (username == 0) {
@@ -1456,7 +1537,7 @@ static char *calcDigest(Webs *wp, char *username, char *password)
 
     /*
         HA2
-     */ 
+     */
     method = wp->method;
     fmt(a2Buf, sizeof(a2Buf), "%s:%s", method, wp->digestUri);
     ha2 = websMD5(a2Buf);
@@ -1516,7 +1597,7 @@ PUBLIC int websSetRouteAuth(WebsRoute *route, char *auth)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -1537,9 +1618,9 @@ PUBLIC int websSetRouteAuth(WebsRoute *route, char *auth)
 
 /*
     cgi.c -- CGI processing
-  
+
     This module implements the /cgi-bin handler. CGI processing differs from
-    goforms processing in that each CGI request is executed as a separate 
+    goforms processing in that each CGI request is executed as a separate
     process, rather than within the webserver process. For each CGI request the
     environment of the new process must be set to include all the CGI variables
     and its standard input and output must be directed to the socket.  This
@@ -1553,7 +1634,7 @@ PUBLIC int websSetRouteAuth(WebsRoute *route, char *auth)
 
 
 /*********************************** Defines **********************************/
-#if ME_GOAHEAD_CGI && !ME_ROM
+#if ME_GOAHEAD_CGI
 
 #if ME_WIN_LIKE
     typedef HANDLE CgiPid;
@@ -1582,7 +1663,8 @@ static CgiPid launchCgi(char *cgiPath, char **argp, char **envp, char *stdIn, ch
 
 /************************************* Code ***********************************/
 /*
-    Process a form request. Returns 1 always to indicate it handled the URL
+    Process a form request.
+    Return true to indicate the request was handled, even for errors.
  */
 PUBLIC bool cgiHandler(Webs *wp)
 {
@@ -1594,7 +1676,7 @@ PUBLIC bool cgiHandler(Webs *wp)
     int         n, envpsize, argpsize, cid;
 
     assert(websValid(wp));
-    
+
     websSetEnv(wp);
 
     /*
@@ -1610,7 +1692,7 @@ PUBLIC bool cgiHandler(Webs *wp)
     getcwd(cwd, ME_GOAHEAD_LIMIT_FILENAME);
     dir = wp->route->dir ? wp->route->dir : cwd;
     chdir(dir);
-    
+
     extraPath = 0;
     if ((cp = strchr(cgiName, '/')) != NULL) {
         extraPath = sclone(cp);
@@ -1620,12 +1702,12 @@ PUBLIC bool cgiHandler(Webs *wp)
         wfree(extraPath);
     } else {
         websSetVar(wp, "PATH_INFO", "");
-        websSetVar(wp, "PATH_TRANSLATED", "");        
+        websSetVar(wp, "PATH_TRANSLATED", "");
     }
     cgiPath = sfmt("%s%s/%s", dir, cgiPrefix, cgiName);
     websSetVarFmt(wp, "SCRIPT_NAME", "%s/%s", cgiPrefix, cgiName);
     websSetVar(wp, "SCRIPT_FILENAME", cgiPath);
-    
+
 /*
     See if the file exists and is executable.  If not error out.  Don't do this step for VxWorks, since the module
     may already be part of the OS image, rather than in the file system.
@@ -1711,11 +1793,11 @@ PUBLIC bool cgiHandler(Webs *wp)
 
     /*
         Create temporary file name(s) for the child's stdin and stdout. For POST data the stdin temp file (and name)
-        should already exist.  
+        should already exist.
      */
     if (wp->cgiStdin == NULL) {
         wp->cgiStdin = websGetCgiCommName();
-    } 
+    }
     stdIn = wp->cgiStdin;
     stdOut = websGetCgiCommName();
     if (wp->cgifd >= 0) {
@@ -1725,7 +1807,7 @@ PUBLIC bool cgiHandler(Webs *wp)
 
     /*
         Now launch the process.  If not successful, do the cleanup of resources.  If successful, the cleanup will be
-        done after the process completes.  
+        done after the process completes.
      */
     if ((pHandle = launchCgi(cgiPath, argp, envp, stdIn, stdOut)) == (CgiPid) -1) {
         websError(wp, HTTP_CODE_INTERNAL_SERVER_ERROR, "failed to spawn CGI task");
@@ -1769,7 +1851,7 @@ PUBLIC int websCgiOpen()
 }
 
 
-PUBLIC int websProcessCgiData(Webs *wp)
+PUBLIC bool websProcessCgiData(Webs *wp)
 {
     ssize   nbytes;
 
@@ -1777,11 +1859,11 @@ PUBLIC int websProcessCgiData(Webs *wp)
     trace(5, "cgi: write %d bytes to CGI program", nbytes);
     if (write(wp->cgifd, wp->input.servp, (int) nbytes) != nbytes) {
         websError(wp, HTTP_CODE_INTERNAL_SERVER_ERROR| WEBS_CLOSE, "Cannot write to CGI gateway");
-        return -1;
+    } else {
+        trace(5, "cgi: write %d bytes to CGI program", nbytes);
     }
     websConsumeInput(wp, nbytes);
-    trace(5, "cgi: write %d bytes to CGI program", nbytes);
-    return 0;
+    return 1;
 }
 
 
@@ -1875,7 +1957,7 @@ PUBLIC void websCgiGatherOutput(Cgi *cgip)
 
     /*
         OPT - currently polling and doing a stat each poll. Also doing open/close each chunk.
-        If the CGI process writes partial headers, this repeatedly reads the data until complete 
+        If the CGI process writes partial headers, this repeatedly reads the data until complete
         headers are written or more than ME_GOAHEAD_LIMIT_HEADERS of data is received.
      */
     if ((stat(cgip->stdOut, &sbuf) == 0) && (sbuf.st_size > cgip->fplacemark)) {
@@ -1915,7 +1997,7 @@ PUBLIC void websCgiGatherOutput(Cgi *cgip)
     Any entry in the cgiList need to be checked to see if it has completed, and if so, process its output and clean up.
     Return time till next poll.
  */
-WebsTime websCgiPoll()
+int websCgiPoll()
 {
     Webs    *wp;
     Cgi     *cgip;
@@ -1934,7 +2016,7 @@ WebsTime websCgiPoll()
                 websCgiGatherOutput(cgip);
 
 #if WINDOWS
-                /*                  
+                /*
                      Windows can have delayed notification through the file system after process exit.
                  */
                 {
@@ -1967,6 +2049,7 @@ WebsTime websCgiPoll()
                     wfree(*ep);
                 }
                 wfree(cgip->cgiPath);
+                wfree(cgip->stdOut);
                 wfree(cgip->argp);
                 wfree(cgip->envp);
                 wfree(cgip);
@@ -1981,12 +2064,12 @@ WebsTime websCgiPoll()
 
 
 /*
-    Returns a pointer to an allocated qualified unique temporary file name. This filename must eventually be deleted with 
-    wfree().  
+    Returns a pointer to an allocated qualified unique temporary file name. This filename must eventually be deleted with
+    wfree().
  */
 PUBLIC char *websGetCgiCommName()
 {
-    return sclone(websTempFile(NULL, "cgi"));
+    return websTempFile(NULL, "cgi");
 }
 
 
@@ -2098,7 +2181,7 @@ static CgiPid launchCgi(char *cgiPath, char **argp, char **envp, char *stdIn, ch
         }
         _exit(0);
     }
-    /* 
+    /*
         Parent
      */
     if (fdout >= 0) {
@@ -2117,7 +2200,7 @@ static CgiPid launchCgi(char *cgiPath, char **argp, char **envp, char *stdIn, ch
 static int checkCgi(CgiPid handle)
 {
     int     pid;
-    
+
     /*
         Check to see if the CGI child process has terminated or not yet.
      */
@@ -2133,12 +2216,12 @@ static int checkCgi(CgiPid handle)
 
 
 #if VXWORKS
-static void vxWebsCgiEntry(void *entryAddr(int argc, char **argv), char **argv, char **envp, char *stdIn, char *stdOut); 
+static void vxWebsCgiEntry(void *entryAddr(int argc, char **argv), char **argv, char **envp, char *stdIn, char *stdOut);
 /*
     Launch the CGI process and return a handle to it. Process spawning is not supported in VxWorks.  Instead, we spawn a
     "task".  A major difference is that we have to know the entry point for the taskSpawn API.  Also the module may have
     to be loaded before being executed; it may also be part of the OS image, in which case it cannot be loaded or
-    unloaded.  
+    unloaded.
     The following sequence is used:
     1. If the module is already loaded, unload it from memory.
     2. Search for a query string keyword=value pair in the environment variables where the keyword is cgientry.  If
@@ -2179,7 +2262,7 @@ static CgiPid launchCgi(char *cgiPath, char **argp, char **envp, char *stdIn, ch
 
     /*
          Set the entry point symbol name as described above.  Look for an already loaded entry point; if it exists, spawn
-         the task accordingly.  
+         the task accordingly.
      */
     for (pp = envp, pEntry = NULL; pp != NULL && *pp != NULL; pp++) {
         if (strncmp(*pp, "cgientry=", 9) == 0) {
@@ -2197,7 +2280,7 @@ static CgiPid launchCgi(char *cgiPath, char **argp, char **envp, char *stdIn, ch
         wfree(pname);
     }
     if (entryAddr != 0) {
-        rc = taskSpawn(pEntry, priority, 0, 20000, (void*) vxWebsCgiEntry, (int) entryAddr, (int) argp, 
+        rc = taskSpawn(pEntry, priority, 0, 20000, (void*) vxWebsCgiEntry, (int) entryAddr, (int) argp,
             (int) envp, (int) stdIn, (int) stdOut, 0, 0, 0, 0, 0);
         goto done;
     }
@@ -2215,7 +2298,7 @@ static CgiPid launchCgi(char *cgiPath, char **argp, char **envp, char *stdIn, ch
         wfree(pname);
     }
     if (entryAddr != 0) {
-        rc = taskSpawn(pEntry, priority, 0, 20000, (void*) vxWebsCgiEntry, (int) entryAddr, (int) argp, 
+        rc = taskSpawn(pEntry, priority, 0, 20000, (void*) vxWebsCgiEntry, (int) entryAddr, (int) argp,
             (int) envp, (int) stdIn, (int) stdOut, 0, 0, 0, 0, 0);
     }
 done:
@@ -2307,7 +2390,7 @@ static int checkCgi(CgiPid handle)
 }
 #endif /* VXWORKS */
 
-#if WINDOWS 
+#if WINDOWS
 /*
     Convert a table of strings into a single block of memory. The input table consists of an array of null-terminated
     strings, terminated in a null pointer.  Returns the address of a block of memory allocated using the walloc()
@@ -2322,15 +2405,15 @@ static uchar *tableToBlock(char **table)
 
     assert(table);
 
-    /*  
-        Calculate the size of the data block.  Allow for final null byte. 
+    /*
+        Calculate the size of the data block.  Allow for final null byte.
      */
-    sizeBlock = 1;                    
+    sizeBlock = 1;
     for (index = 0; table[index]; index++) {
         sizeBlock += strlen(table[index]) + 1;
     }
     /*
-        Allocate the data block and fill it with the strings                   
+        Allocate the data block and fill it with the strings
      */
     pBlock = walloc(sizeBlock);
 
@@ -2340,10 +2423,10 @@ static uchar *tableToBlock(char **table)
             strcpy(pEntry, table[index]);
             pEntry += strlen(pEntry) + 1;
         }
-        /*      
-            Terminate the data block with an extra null string                
+        /*
+            Terminate the data block with an extra null string
          */
-        *pEntry = '\0';              
+        *pEntry = '\0';
     }
     return pBlock;
 }
@@ -2420,7 +2503,7 @@ static CgiPid launchCgi(char *cgiPath, char **argp, char **envp, char *stdIn, ch
         Stdin file should already exist.
      */
     newinfo.hStdInput = CreateFile(stdIn, GENERIC_READ, FILE_SHARE_READ, &security, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL,
-            NULL); 
+            NULL);
     if (newinfo.hStdOutput == (HANDLE) -1) {
         error("Cannot open CGI stdin file");
         return (CgiPid) -1;
@@ -2429,7 +2512,7 @@ static CgiPid launchCgi(char *cgiPath, char **argp, char **envp, char *stdIn, ch
     /*
         Stdout file is created and file pointer is reset to start.
      */
-    newinfo.hStdOutput = CreateFile(stdOut, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ + FILE_SHARE_WRITE, 
+    newinfo.hStdOutput = CreateFile(stdOut, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ + FILE_SHARE_WRITE,
             &security, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (newinfo.hStdOutput == (HANDLE) -1) {
         error("Cannot create CGI stdout file");
@@ -2499,7 +2582,7 @@ static int checkCgi(CgiPid handle)
     return 1;
 }
 #endif /* WIN */
-#endif /* ME_GOAHEAD_CGI && !ME_ROM */
+#endif /* ME_GOAHEAD_CGI */
 
 /*
     @copy   default
@@ -2507,7 +2590,7 @@ static int checkCgi(CgiPid handle)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -2537,6 +2620,10 @@ static int checkCgi(CgiPid handle)
 
 
 /*********************************** Locals ***********************************/
+
+#define BLOWFISH_SALT_LENGTH   16
+#define BLOWFISH_ROUNDS        128
+
 /*
     Constants for transform routine
  */
@@ -2580,7 +2667,7 @@ static uchar PADDING[64] = {
      FF, GG, HH, and II transformations for rounds 1, 2, 3, and 4.
      Rotation is separate from addition to prevent recomputation.
  */
- 
+
 #define FF(a, b, c, d, x, s, ac) { \
  (a) += F ((b), (c), (d)) + (x) + (uint)(ac); \
  (a) = ROTATE_LEFT ((a), (s)); \
@@ -2636,7 +2723,7 @@ static signed char decodeMap[] = {
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,
     52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1,
     -1,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14,
-    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1, 
+    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1,
     -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
     41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -2698,8 +2785,9 @@ PUBLIC char *websDecode64Block(char *s, ssize *len, int flags)
         for (i = 0; i < 4 && (s < end && (*s != '=' || !(flags & WEBS_DECODE_TOKEQ))); i++, s++) {
             c = decodeMap[*s & 0xff];
             if (c == -1) {
+                wfree(buffer);
                 return NULL;
-            } 
+            }
             bitBuf = bitBuf | (c << shift);
             shift -= 6;
         }
@@ -2762,7 +2850,7 @@ PUBLIC char *websMD5Block(char *buf, ssize length, char *prefix)
 
 /*
     MD5 initialization. Begins an MD5 operation, writing a new context.
- */ 
+ */
 static void initMD5(MD5CONTEXT *context)
 {
     context->count[0] = context->count[1] = 0;
@@ -2774,7 +2862,7 @@ static void initMD5(MD5CONTEXT *context)
 
 
 /*
-    MD5 block update operation. Continues an MD5 message-digest operation, processing another message block, 
+    MD5 block update operation. Continues an MD5 message-digest operation, processing another message block,
     and updating the context.
  */
 static void update(MD5CONTEXT *context, uchar *input, uint inputLen)
@@ -2805,7 +2893,7 @@ static void update(MD5CONTEXT *context, uchar *input, uint inputLen)
 
 /*
     MD5 finalization. Ends an MD5 message-digest operation, writing the message digest and zeroizing the context.
- */ 
+ */
 static void finalizeMD5(uchar digest[16], MD5CONTEXT *context)
 {
     uchar   bits[8];
@@ -2944,7 +3032,7 @@ static void decode(uint *output, uchar *input, uint len)
     uint    i, j;
 
     for (i = 0, j = 0; j < len; i++, j += 4)
-        output[i] = ((uint) input[j]) | (((uint) input[j+1]) << 8) | (((uint) input[j+2]) << 16) | 
+        output[i] = ((uint) input[j]) | (((uint) input[j+1]) << 8) | (((uint) input[j+2]) << 16) |
             (((uint) input[j+3]) << 24);
 }
 
@@ -2996,13 +3084,636 @@ PUBLIC char *websEncode64Block(char *s, ssize len)
     return buffer;
 }
 
+/************************************ Blowfish *******************************/
+
+#define BF_ROUNDS 16
+
+typedef struct {
+  uint P[16 + 2];
+  uint S[4][256];
+} WebsBlowfish;
+
+static const uint ORIG_P[16 + 2] = {
+        0x243F6A88L, 0x85A308D3L, 0x13198A2EL, 0x03707344L,
+        0xA4093822L, 0x299F31D0L, 0x082EFA98L, 0xEC4E6C89L,
+        0x452821E6L, 0x38D01377L, 0xBE5466CFL, 0x34E90C6CL,
+        0xC0AC29B7L, 0xC97C50DDL, 0x3F84D5B5L, 0xB5470917L,
+        0x9216D5D9L, 0x8979FB1BL
+};
+
+/*
+    Digits of PI
+ */
+static const uint ORIG_S[4][256] = {
+    {   0xD1310BA6L, 0x98DFB5ACL, 0x2FFD72DBL, 0xD01ADFB7L,
+        0xB8E1AFEDL, 0x6A267E96L, 0xBA7C9045L, 0xF12C7F99L,
+        0x24A19947L, 0xB3916CF7L, 0x0801F2E2L, 0x858EFC16L,
+        0x636920D8L, 0x71574E69L, 0xA458FEA3L, 0xF4933D7EL,
+        0x0D95748FL, 0x728EB658L, 0x718BCD58L, 0x82154AEEL,
+        0x7B54A41DL, 0xC25A59B5L, 0x9C30D539L, 0x2AF26013L,
+        0xC5D1B023L, 0x286085F0L, 0xCA417918L, 0xB8DB38EFL,
+        0x8E79DCB0L, 0x603A180EL, 0x6C9E0E8BL, 0xB01E8A3EL,
+        0xD71577C1L, 0xBD314B27L, 0x78AF2FDAL, 0x55605C60L,
+        0xE65525F3L, 0xAA55AB94L, 0x57489862L, 0x63E81440L,
+        0x55CA396AL, 0x2AAB10B6L, 0xB4CC5C34L, 0x1141E8CEL,
+        0xA15486AFL, 0x7C72E993L, 0xB3EE1411L, 0x636FBC2AL,
+        0x2BA9C55DL, 0x741831F6L, 0xCE5C3E16L, 0x9B87931EL,
+        0xAFD6BA33L, 0x6C24CF5CL, 0x7A325381L, 0x28958677L,
+        0x3B8F4898L, 0x6B4BB9AFL, 0xC4BFE81BL, 0x66282193L,
+        0x61D809CCL, 0xFB21A991L, 0x487CAC60L, 0x5DEC8032L,
+        0xEF845D5DL, 0xE98575B1L, 0xDC262302L, 0xEB651B88L,
+        0x23893E81L, 0xD396ACC5L, 0x0F6D6FF3L, 0x83F44239L,
+        0x2E0B4482L, 0xA4842004L, 0x69C8F04AL, 0x9E1F9B5EL,
+        0x21C66842L, 0xF6E96C9AL, 0x670C9C61L, 0xABD388F0L,
+        0x6A51A0D2L, 0xD8542F68L, 0x960FA728L, 0xAB5133A3L,
+        0x6EEF0B6CL, 0x137A3BE4L, 0xBA3BF050L, 0x7EFB2A98L,
+        0xA1F1651DL, 0x39AF0176L, 0x66CA593EL, 0x82430E88L,
+        0x8CEE8619L, 0x456F9FB4L, 0x7D84A5C3L, 0x3B8B5EBEL,
+        0xE06F75D8L, 0x85C12073L, 0x401A449FL, 0x56C16AA6L,
+        0x4ED3AA62L, 0x363F7706L, 0x1BFEDF72L, 0x429B023DL,
+        0x37D0D724L, 0xD00A1248L, 0xDB0FEAD3L, 0x49F1C09BL,
+        0x075372C9L, 0x80991B7BL, 0x25D479D8L, 0xF6E8DEF7L,
+        0xE3FE501AL, 0xB6794C3BL, 0x976CE0BDL, 0x04C006BAL,
+        0xC1A94FB6L, 0x409F60C4L, 0x5E5C9EC2L, 0x196A2463L,
+        0x68FB6FAFL, 0x3E6C53B5L, 0x1339B2EBL, 0x3B52EC6FL,
+        0x6DFC511FL, 0x9B30952CL, 0xCC814544L, 0xAF5EBD09L,
+        0xBEE3D004L, 0xDE334AFDL, 0x660F2807L, 0x192E4BB3L,
+        0xC0CBA857L, 0x45C8740FL, 0xD20B5F39L, 0xB9D3FBDBL,
+        0x5579C0BDL, 0x1A60320AL, 0xD6A100C6L, 0x402C7279L,
+        0x679F25FEL, 0xFB1FA3CCL, 0x8EA5E9F8L, 0xDB3222F8L,
+        0x3C7516DFL, 0xFD616B15L, 0x2F501EC8L, 0xAD0552ABL,
+        0x323DB5FAL, 0xFD238760L, 0x53317B48L, 0x3E00DF82L,
+        0x9E5C57BBL, 0xCA6F8CA0L, 0x1A87562EL, 0xDF1769DBL,
+        0xD542A8F6L, 0x287EFFC3L, 0xAC6732C6L, 0x8C4F5573L,
+        0x695B27B0L, 0xBBCA58C8L, 0xE1FFA35DL, 0xB8F011A0L,
+        0x10FA3D98L, 0xFD2183B8L, 0x4AFCB56CL, 0x2DD1D35BL,
+        0x9A53E479L, 0xB6F84565L, 0xD28E49BCL, 0x4BFB9790L,
+        0xE1DDF2DAL, 0xA4CB7E33L, 0x62FB1341L, 0xCEE4C6E8L,
+        0xEF20CADAL, 0x36774C01L, 0xD07E9EFEL, 0x2BF11FB4L,
+        0x95DBDA4DL, 0xAE909198L, 0xEAAD8E71L, 0x6B93D5A0L,
+        0xD08ED1D0L, 0xAFC725E0L, 0x8E3C5B2FL, 0x8E7594B7L,
+        0x8FF6E2FBL, 0xF2122B64L, 0x8888B812L, 0x900DF01CL,
+        0x4FAD5EA0L, 0x688FC31CL, 0xD1CFF191L, 0xB3A8C1ADL,
+        0x2F2F2218L, 0xBE0E1777L, 0xEA752DFEL, 0x8B021FA1L,
+        0xE5A0CC0FL, 0xB56F74E8L, 0x18ACF3D6L, 0xCE89E299L,
+        0xB4A84FE0L, 0xFD13E0B7L, 0x7CC43B81L, 0xD2ADA8D9L,
+        0x165FA266L, 0x80957705L, 0x93CC7314L, 0x211A1477L,
+        0xE6AD2065L, 0x77B5FA86L, 0xC75442F5L, 0xFB9D35CFL,
+        0xEBCDAF0CL, 0x7B3E89A0L, 0xD6411BD3L, 0xAE1E7E49L,
+        0x00250E2DL, 0x2071B35EL, 0x226800BBL, 0x57B8E0AFL,
+        0x2464369BL, 0xF009B91EL, 0x5563911DL, 0x59DFA6AAL,
+        0x78C14389L, 0xD95A537FL, 0x207D5BA2L, 0x02E5B9C5L,
+        0x83260376L, 0x6295CFA9L, 0x11C81968L, 0x4E734A41L,
+        0xB3472DCAL, 0x7B14A94AL, 0x1B510052L, 0x9A532915L,
+        0xD60F573FL, 0xBC9BC6E4L, 0x2B60A476L, 0x81E67400L,
+        0x08BA6FB5L, 0x571BE91FL, 0xF296EC6BL, 0x2A0DD915L,
+        0xB6636521L, 0xE7B9F9B6L, 0xFF34052EL, 0xC5855664L,
+        0x53B02D5DL, 0xA99F8FA1L, 0x08BA4799L, 0x6E85076AL
+    }, {
+        0x4B7A70E9L, 0xB5B32944L, 0xDB75092EL, 0xC4192623L,
+        0xAD6EA6B0L, 0x49A7DF7DL, 0x9CEE60B8L, 0x8FEDB266L,
+        0xECAA8C71L, 0x699A17FFL, 0x5664526CL, 0xC2B19EE1L,
+        0x193602A5L, 0x75094C29L, 0xA0591340L, 0xE4183A3EL,
+        0x3F54989AL, 0x5B429D65L, 0x6B8FE4D6L, 0x99F73FD6L,
+        0xA1D29C07L, 0xEFE830F5L, 0x4D2D38E6L, 0xF0255DC1L,
+        0x4CDD2086L, 0x8470EB26L, 0x6382E9C6L, 0x021ECC5EL,
+        0x09686B3FL, 0x3EBAEFC9L, 0x3C971814L, 0x6B6A70A1L,
+        0x687F3584L, 0x52A0E286L, 0xB79C5305L, 0xAA500737L,
+        0x3E07841CL, 0x7FDEAE5CL, 0x8E7D44ECL, 0x5716F2B8L,
+        0xB03ADA37L, 0xF0500C0DL, 0xF01C1F04L, 0x0200B3FFL,
+        0xAE0CF51AL, 0x3CB574B2L, 0x25837A58L, 0xDC0921BDL,
+        0xD19113F9L, 0x7CA92FF6L, 0x94324773L, 0x22F54701L,
+        0x3AE5E581L, 0x37C2DADCL, 0xC8B57634L, 0x9AF3DDA7L,
+        0xA9446146L, 0x0FD0030EL, 0xECC8C73EL, 0xA4751E41L,
+        0xE238CD99L, 0x3BEA0E2FL, 0x3280BBA1L, 0x183EB331L,
+        0x4E548B38L, 0x4F6DB908L, 0x6F420D03L, 0xF60A04BFL,
+        0x2CB81290L, 0x24977C79L, 0x5679B072L, 0xBCAF89AFL,
+        0xDE9A771FL, 0xD9930810L, 0xB38BAE12L, 0xDCCF3F2EL,
+        0x5512721FL, 0x2E6B7124L, 0x501ADDE6L, 0x9F84CD87L,
+        0x7A584718L, 0x7408DA17L, 0xBC9F9ABCL, 0xE94B7D8CL,
+        0xEC7AEC3AL, 0xDB851DFAL, 0x63094366L, 0xC464C3D2L,
+        0xEF1C1847L, 0x3215D908L, 0xDD433B37L, 0x24C2BA16L,
+        0x12A14D43L, 0x2A65C451L, 0x50940002L, 0x133AE4DDL,
+        0x71DFF89EL, 0x10314E55L, 0x81AC77D6L, 0x5F11199BL,
+        0x043556F1L, 0xD7A3C76BL, 0x3C11183BL, 0x5924A509L,
+        0xF28FE6EDL, 0x97F1FBFAL, 0x9EBABF2CL, 0x1E153C6EL,
+        0x86E34570L, 0xEAE96FB1L, 0x860E5E0AL, 0x5A3E2AB3L,
+        0x771FE71CL, 0x4E3D06FAL, 0x2965DCB9L, 0x99E71D0FL,
+        0x803E89D6L, 0x5266C825L, 0x2E4CC978L, 0x9C10B36AL,
+        0xC6150EBAL, 0x94E2EA78L, 0xA5FC3C53L, 0x1E0A2DF4L,
+        0xF2F74EA7L, 0x361D2B3DL, 0x1939260FL, 0x19C27960L,
+        0x5223A708L, 0xF71312B6L, 0xEBADFE6EL, 0xEAC31F66L,
+        0xE3BC4595L, 0xA67BC883L, 0xB17F37D1L, 0x018CFF28L,
+        0xC332DDEFL, 0xBE6C5AA5L, 0x65582185L, 0x68AB9802L,
+        0xEECEA50FL, 0xDB2F953BL, 0x2AEF7DADL, 0x5B6E2F84L,
+        0x1521B628L, 0x29076170L, 0xECDD4775L, 0x619F1510L,
+        0x13CCA830L, 0xEB61BD96L, 0x0334FE1EL, 0xAA0363CFL,
+        0xB5735C90L, 0x4C70A239L, 0xD59E9E0BL, 0xCBAADE14L,
+        0xEECC86BCL, 0x60622CA7L, 0x9CAB5CABL, 0xB2F3846EL,
+        0x648B1EAFL, 0x19BDF0CAL, 0xA02369B9L, 0x655ABB50L,
+        0x40685A32L, 0x3C2AB4B3L, 0x319EE9D5L, 0xC021B8F7L,
+        0x9B540B19L, 0x875FA099L, 0x95F7997EL, 0x623D7DA8L,
+        0xF837889AL, 0x97E32D77L, 0x11ED935FL, 0x16681281L,
+        0x0E358829L, 0xC7E61FD6L, 0x96DEDFA1L, 0x7858BA99L,
+        0x57F584A5L, 0x1B227263L, 0x9B83C3FFL, 0x1AC24696L,
+        0xCDB30AEBL, 0x532E3054L, 0x8FD948E4L, 0x6DBC3128L,
+        0x58EBF2EFL, 0x34C6FFEAL, 0xFE28ED61L, 0xEE7C3C73L,
+        0x5D4A14D9L, 0xE864B7E3L, 0x42105D14L, 0x203E13E0L,
+        0x45EEE2B6L, 0xA3AAABEAL, 0xDB6C4F15L, 0xFACB4FD0L,
+        0xC742F442L, 0xEF6ABBB5L, 0x654F3B1DL, 0x41CD2105L,
+        0xD81E799EL, 0x86854DC7L, 0xE44B476AL, 0x3D816250L,
+        0xCF62A1F2L, 0x5B8D2646L, 0xFC8883A0L, 0xC1C7B6A3L,
+        0x7F1524C3L, 0x69CB7492L, 0x47848A0BL, 0x5692B285L,
+        0x095BBF00L, 0xAD19489DL, 0x1462B174L, 0x23820E00L,
+        0x58428D2AL, 0x0C55F5EAL, 0x1DADF43EL, 0x233F7061L,
+        0x3372F092L, 0x8D937E41L, 0xD65FECF1L, 0x6C223BDBL,
+        0x7CDE3759L, 0xCBEE7460L, 0x4085F2A7L, 0xCE77326EL,
+        0xA6078084L, 0x19F8509EL, 0xE8EFD855L, 0x61D99735L,
+        0xA969A7AAL, 0xC50C06C2L, 0x5A04ABFCL, 0x800BCADCL,
+        0x9E447A2EL, 0xC3453484L, 0xFDD56705L, 0x0E1E9EC9L,
+        0xDB73DBD3L, 0x105588CDL, 0x675FDA79L, 0xE3674340L,
+        0xC5C43465L, 0x713E38D8L, 0x3D28F89EL, 0xF16DFF20L,
+        0x153E21E7L, 0x8FB03D4AL, 0xE6E39F2BL, 0xDB83ADF7L
+    }, {
+        0xE93D5A68L, 0x948140F7L, 0xF64C261CL, 0x94692934L,
+        0x411520F7L, 0x7602D4F7L, 0xBCF46B2EL, 0xD4A20068L,
+        0xD4082471L, 0x3320F46AL, 0x43B7D4B7L, 0x500061AFL,
+        0x1E39F62EL, 0x97244546L, 0x14214F74L, 0xBF8B8840L,
+        0x4D95FC1DL, 0x96B591AFL, 0x70F4DDD3L, 0x66A02F45L,
+        0xBFBC09ECL, 0x03BD9785L, 0x7FAC6DD0L, 0x31CB8504L,
+        0x96EB27B3L, 0x55FD3941L, 0xDA2547E6L, 0xABCA0A9AL,
+        0x28507825L, 0x530429F4L, 0x0A2C86DAL, 0xE9B66DFBL,
+        0x68DC1462L, 0xD7486900L, 0x680EC0A4L, 0x27A18DEEL,
+        0x4F3FFEA2L, 0xE887AD8CL, 0xB58CE006L, 0x7AF4D6B6L,
+        0xAACE1E7CL, 0xD3375FECL, 0xCE78A399L, 0x406B2A42L,
+        0x20FE9E35L, 0xD9F385B9L, 0xEE39D7ABL, 0x3B124E8BL,
+        0x1DC9FAF7L, 0x4B6D1856L, 0x26A36631L, 0xEAE397B2L,
+        0x3A6EFA74L, 0xDD5B4332L, 0x6841E7F7L, 0xCA7820FBL,
+        0xFB0AF54EL, 0xD8FEB397L, 0x454056ACL, 0xBA489527L,
+        0x55533A3AL, 0x20838D87L, 0xFE6BA9B7L, 0xD096954BL,
+        0x55A867BCL, 0xA1159A58L, 0xCCA92963L, 0x99E1DB33L,
+        0xA62A4A56L, 0x3F3125F9L, 0x5EF47E1CL, 0x9029317CL,
+        0xFDF8E802L, 0x04272F70L, 0x80BB155CL, 0x05282CE3L,
+        0x95C11548L, 0xE4C66D22L, 0x48C1133FL, 0xC70F86DCL,
+        0x07F9C9EEL, 0x41041F0FL, 0x404779A4L, 0x5D886E17L,
+        0x325F51EBL, 0xD59BC0D1L, 0xF2BCC18FL, 0x41113564L,
+        0x257B7834L, 0x602A9C60L, 0xDFF8E8A3L, 0x1F636C1BL,
+        0x0E12B4C2L, 0x02E1329EL, 0xAF664FD1L, 0xCAD18115L,
+        0x6B2395E0L, 0x333E92E1L, 0x3B240B62L, 0xEEBEB922L,
+        0x85B2A20EL, 0xE6BA0D99L, 0xDE720C8CL, 0x2DA2F728L,
+        0xD0127845L, 0x95B794FDL, 0x647D0862L, 0xE7CCF5F0L,
+        0x5449A36FL, 0x877D48FAL, 0xC39DFD27L, 0xF33E8D1EL,
+        0x0A476341L, 0x992EFF74L, 0x3A6F6EABL, 0xF4F8FD37L,
+        0xA812DC60L, 0xA1EBDDF8L, 0x991BE14CL, 0xDB6E6B0DL,
+        0xC67B5510L, 0x6D672C37L, 0x2765D43BL, 0xDCD0E804L,
+        0xF1290DC7L, 0xCC00FFA3L, 0xB5390F92L, 0x690FED0BL,
+        0x667B9FFBL, 0xCEDB7D9CL, 0xA091CF0BL, 0xD9155EA3L,
+        0xBB132F88L, 0x515BAD24L, 0x7B9479BFL, 0x763BD6EBL,
+        0x37392EB3L, 0xCC115979L, 0x8026E297L, 0xF42E312DL,
+        0x6842ADA7L, 0xC66A2B3BL, 0x12754CCCL, 0x782EF11CL,
+        0x6A124237L, 0xB79251E7L, 0x06A1BBE6L, 0x4BFB6350L,
+        0x1A6B1018L, 0x11CAEDFAL, 0x3D25BDD8L, 0xE2E1C3C9L,
+        0x44421659L, 0x0A121386L, 0xD90CEC6EL, 0xD5ABEA2AL,
+        0x64AF674EL, 0xDA86A85FL, 0xBEBFE988L, 0x64E4C3FEL,
+        0x9DBC8057L, 0xF0F7C086L, 0x60787BF8L, 0x6003604DL,
+        0xD1FD8346L, 0xF6381FB0L, 0x7745AE04L, 0xD736FCCCL,
+        0x83426B33L, 0xF01EAB71L, 0xB0804187L, 0x3C005E5FL,
+        0x77A057BEL, 0xBDE8AE24L, 0x55464299L, 0xBF582E61L,
+        0x4E58F48FL, 0xF2DDFDA2L, 0xF474EF38L, 0x8789BDC2L,
+        0x5366F9C3L, 0xC8B38E74L, 0xB475F255L, 0x46FCD9B9L,
+        0x7AEB2661L, 0x8B1DDF84L, 0x846A0E79L, 0x915F95E2L,
+        0x466E598EL, 0x20B45770L, 0x8CD55591L, 0xC902DE4CL,
+        0xB90BACE1L, 0xBB8205D0L, 0x11A86248L, 0x7574A99EL,
+        0xB77F19B6L, 0xE0A9DC09L, 0x662D09A1L, 0xC4324633L,
+        0xE85A1F02L, 0x09F0BE8CL, 0x4A99A025L, 0x1D6EFE10L,
+        0x1AB93D1DL, 0x0BA5A4DFL, 0xA186F20FL, 0x2868F169L,
+        0xDCB7DA83L, 0x573906FEL, 0xA1E2CE9BL, 0x4FCD7F52L,
+        0x50115E01L, 0xA70683FAL, 0xA002B5C4L, 0x0DE6D027L,
+        0x9AF88C27L, 0x773F8641L, 0xC3604C06L, 0x61A806B5L,
+        0xF0177A28L, 0xC0F586E0L, 0x006058AAL, 0x30DC7D62L,
+        0x11E69ED7L, 0x2338EA63L, 0x53C2DD94L, 0xC2C21634L,
+        0xBBCBEE56L, 0x90BCB6DEL, 0xEBFC7DA1L, 0xCE591D76L,
+        0x6F05E409L, 0x4B7C0188L, 0x39720A3DL, 0x7C927C24L,
+        0x86E3725FL, 0x724D9DB9L, 0x1AC15BB4L, 0xD39EB8FCL,
+        0xED545578L, 0x08FCA5B5L, 0xD83D7CD3L, 0x4DAD0FC4L,
+        0x1E50EF5EL, 0xB161E6F8L, 0xA28514D9L, 0x6C51133CL,
+        0x6FD5C7E7L, 0x56E14EC4L, 0x362ABFCEL, 0xDDC6C837L,
+        0xD79A3234L, 0x92638212L, 0x670EFA8EL, 0x406000E0L
+    }, {
+        0x3A39CE37L, 0xD3FAF5CFL, 0xABC27737L, 0x5AC52D1BL,
+        0x5CB0679EL, 0x4FA33742L, 0xD3822740L, 0x99BC9BBEL,
+        0xD5118E9DL, 0xBF0F7315L, 0xD62D1C7EL, 0xC700C47BL,
+        0xB78C1B6BL, 0x21A19045L, 0xB26EB1BEL, 0x6A366EB4L,
+        0x5748AB2FL, 0xBC946E79L, 0xC6A376D2L, 0x6549C2C8L,
+        0x530FF8EEL, 0x468DDE7DL, 0xD5730A1DL, 0x4CD04DC6L,
+        0x2939BBDBL, 0xA9BA4650L, 0xAC9526E8L, 0xBE5EE304L,
+        0xA1FAD5F0L, 0x6A2D519AL, 0x63EF8CE2L, 0x9A86EE22L,
+        0xC089C2B8L, 0x43242EF6L, 0xA51E03AAL, 0x9CF2D0A4L,
+        0x83C061BAL, 0x9BE96A4DL, 0x8FE51550L, 0xBA645BD6L,
+        0x2826A2F9L, 0xA73A3AE1L, 0x4BA99586L, 0xEF5562E9L,
+        0xC72FEFD3L, 0xF752F7DAL, 0x3F046F69L, 0x77FA0A59L,
+        0x80E4A915L, 0x87B08601L, 0x9B09E6ADL, 0x3B3EE593L,
+        0xE990FD5AL, 0x9E34D797L, 0x2CF0B7D9L, 0x022B8B51L,
+        0x96D5AC3AL, 0x017DA67DL, 0xD1CF3ED6L, 0x7C7D2D28L,
+        0x1F9F25CFL, 0xADF2B89BL, 0x5AD6B472L, 0x5A88F54CL,
+        0xE029AC71L, 0xE019A5E6L, 0x47B0ACFDL, 0xED93FA9BL,
+        0xE8D3C48DL, 0x283B57CCL, 0xF8D56629L, 0x79132E28L,
+        0x785F0191L, 0xED756055L, 0xF7960E44L, 0xE3D35E8CL,
+        0x15056DD4L, 0x88F46DBAL, 0x03A16125L, 0x0564F0BDL,
+        0xC3EB9E15L, 0x3C9057A2L, 0x97271AECL, 0xA93A072AL,
+        0x1B3F6D9BL, 0x1E6321F5L, 0xF59C66FBL, 0x26DCF319L,
+        0x7533D928L, 0xB155FDF5L, 0x03563482L, 0x8ABA3CBBL,
+        0x28517711L, 0xC20AD9F8L, 0xABCC5167L, 0xCCAD925FL,
+        0x4DE81751L, 0x3830DC8EL, 0x379D5862L, 0x9320F991L,
+        0xEA7A90C2L, 0xFB3E7BCEL, 0x5121CE64L, 0x774FBE32L,
+        0xA8B6E37EL, 0xC3293D46L, 0x48DE5369L, 0x6413E680L,
+        0xA2AE0810L, 0xDD6DB224L, 0x69852DFDL, 0x09072166L,
+        0xB39A460AL, 0x6445C0DDL, 0x586CDECFL, 0x1C20C8AEL,
+        0x5BBEF7DDL, 0x1B588D40L, 0xCCD2017FL, 0x6BB4E3BBL,
+        0xDDA26A7EL, 0x3A59FF45L, 0x3E350A44L, 0xBCB4CDD5L,
+        0x72EACEA8L, 0xFA6484BBL, 0x8D6612AEL, 0xBF3C6F47L,
+        0xD29BE463L, 0x542F5D9EL, 0xAEC2771BL, 0xF64E6370L,
+        0x740E0D8DL, 0xE75B1357L, 0xF8721671L, 0xAF537D5DL,
+        0x4040CB08L, 0x4EB4E2CCL, 0x34D2466AL, 0x0115AF84L,
+        0xE1B00428L, 0x95983A1DL, 0x06B89FB4L, 0xCE6EA048L,
+        0x6F3F3B82L, 0x3520AB82L, 0x011A1D4BL, 0x277227F8L,
+        0x611560B1L, 0xE7933FDCL, 0xBB3A792BL, 0x344525BDL,
+        0xA08839E1L, 0x51CE794BL, 0x2F32C9B7L, 0xA01FBAC9L,
+        0xE01CC87EL, 0xBCC7D1F6L, 0xCF0111C3L, 0xA1E8AAC7L,
+        0x1A908749L, 0xD44FBD9AL, 0xD0DADECBL, 0xD50ADA38L,
+        0x0339C32AL, 0xC6913667L, 0x8DF9317CL, 0xE0B12B4FL,
+        0xF79E59B7L, 0x43F5BB3AL, 0xF2D519FFL, 0x27D9459CL,
+        0xBF97222CL, 0x15E6FC2AL, 0x0F91FC71L, 0x9B941525L,
+        0xFAE59361L, 0xCEB69CEBL, 0xC2A86459L, 0x12BAA8D1L,
+        0xB6C1075EL, 0xE3056A0CL, 0x10D25065L, 0xCB03A442L,
+        0xE0EC6E0EL, 0x1698DB3BL, 0x4C98A0BEL, 0x3278E964L,
+        0x9F1F9532L, 0xE0D392DFL, 0xD3A0342BL, 0x8971F21EL,
+        0x1B0A7441L, 0x4BA3348CL, 0xC5BE7120L, 0xC37632D8L,
+        0xDF359F8DL, 0x9B992F2EL, 0xE60B6F47L, 0x0FE3F11DL,
+        0xE54CDA54L, 0x1EDAD891L, 0xCE6279CFL, 0xCD3E7E6FL,
+        0x1618B166L, 0xFD2C1D05L, 0x848FD2C5L, 0xF6FB2299L,
+        0xF523F357L, 0xA6327623L, 0x93A83531L, 0x56CCCD02L,
+        0xACF08162L, 0x5A75EBB5L, 0x6E163697L, 0x88D273CCL,
+        0xDE966292L, 0x81B949D0L, 0x4C50901BL, 0x71C65614L,
+        0xE6C6C7BDL, 0x327A140AL, 0x45E1D006L, 0xC3F27B9AL,
+        0xC9AA53FDL, 0x62A80F00L, 0xBB25BFE2L, 0x35BDD2F6L,
+        0x71126905L, 0xB2040222L, 0xB6CBCF7CL, 0xCD769C2BL,
+        0x53113EC0L, 0x1640E3D3L, 0x38ABBD60L, 0x2547ADF0L,
+        0xBA38209CL, 0xF746CE76L, 0x77AFA1C5L, 0x20756060L,
+        0x85CBFE4EL, 0x8AE88DD8L, 0x7AAAF9B0L, 0x4CF9AA7EL,
+        0x1948C25CL, 0x02FB8A8CL, 0x01C36AE4L, 0xD6EBE1F9L,
+        0x90D4F869L, 0xA65CDEA0L, 0x3F09252DL, 0xC208E69FL,
+        0xB74E6132L, 0xCE77E25BL, 0x578FDFE3L, 0x3AC372E6L
+    }
+};
+
+
+static uint BF(WebsBlowfish *bp, uint x)
+{
+   ushort a, b, c, d;
+   uint  y;
+
+    d = x & 0x00FF;
+    x >>= 8;
+    c = x & 0x00FF;
+    x >>= 8;
+    b = x & 0x00FF;
+    x >>= 8;
+    a = x & 0x00FF;
+
+    y = bp->S[0][a] + bp->S[1][b];
+    y = y ^ bp->S[2][c];
+    y = y + bp->S[3][d];
+    return y;
+}
+
+
+static void bencrypt(WebsBlowfish *bp, uint *xl, uint *xr)
+{
+    uint    Xl, Xr, temp;
+    int     i;
+
+    Xl = *xl;
+    Xr = *xr;
+
+    for (i = 0; i < BF_ROUNDS; ++i) {
+        Xl = Xl ^ bp->P[i];
+        Xr = BF(bp, Xl) ^ Xr;
+        temp = Xl;
+        Xl = Xr;
+        Xr = temp;
+    }
+    temp = Xl;
+    Xl = Xr;
+    Xr = temp;
+    Xr = Xr ^ bp->P[BF_ROUNDS];
+    Xl = Xl ^ bp->P[BF_ROUNDS + 1];
+    *xl = Xl;
+    *xr = Xr;
+}
+
+
+#if KEEP
+static void bdecrypt(WebsBlowfish *bp, uint *xl, uint *xr)
+{
+    uint    Xl, Xr, temp;
+    int     i;
+
+    Xl = *xl;
+    Xr = *xr;
+
+    for (i = BF_ROUNDS + 1; i > 1; --i) {
+        Xl = Xl ^ bp->P[i];
+        Xr = BF(bp, Xl) ^ Xr;
+        temp = Xl;
+        Xl = Xr;
+        Xr = temp;
+    }
+    temp = Xl;
+    Xl = Xr;
+    Xr = temp;
+    Xr = Xr ^ bp->P[1];
+    Xl = Xl ^ bp->P[0];
+    *xl = Xl;
+    *xr = Xr;
+}
+#endif
+
+
+static void binit(WebsBlowfish *bp, uchar *key, ssize keylen)
+{
+  uint  data, datal, datar;
+  int   i, j, k;
+
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 256; j++) {
+            bp->S[i][j] = ORIG_S[i][j];
+        }
+    }
+    for (j = i = 0; i < BF_ROUNDS + 2; ++i) {
+        for (data = 0, k = 0; k < 4; ++k) {
+            data = (data << 8) | key[j];
+            j = j + 1;
+            if (j >= keylen) {
+                j = 0;
+            }
+        }
+        bp->P[i] = ORIG_P[i] ^ data;
+    }
+    datal = datar = 0;
+
+    for (i = 0; i < BF_ROUNDS + 2; i += 2) {
+        bencrypt(bp, &datal, &datar);
+        bp->P[i] = datal;
+        bp->P[i + 1] = datar;
+    }
+    for (i = 0; i < 4; ++i) {
+        for (j = 0; j < 256; j += 2) {
+            bencrypt(bp, &datal, &datar);
+            bp->S[i][j] = datal;
+            bp->S[i][j + 1] = datar;
+        }
+    }
+}
+
+
+/*
+    Text: "OrpheanBeholderScryDoubt"
+ */
+static uint cipherText[6] = {
+    0x4f727068, 0x65616e42, 0x65686f6c,
+    0x64657253, 0x63727944, 0x6f756274
+};
+
+
+PUBLIC int websGetRandomBytes(char *buf, ssize length, bool block)
+{
+#if ME_UNIX_LIKE
+    ssize   sofar, rc;
+    int     fd;
+
+    if ((fd = open((block) ? "/dev/random" : "/dev/urandom", O_RDONLY, 0666)) < 0) {
+        return -1;
+    }
+    sofar = 0;
+    do {
+        rc = read(fd, &buf[sofar], length);
+        if (rc < 0) {
+            assert(0);
+            close(fd);
+            return -1;
+        }
+        length -= rc;
+        sofar += rc;
+    } while (length > 0);
+    close(fd);
+#elif ME_WIN_LIKE
+    HCRYPTPROV      prov;
+    int             rc;
+
+    rc = 0;
+    if (!CryptAcquireContext(&prov, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT | 0x40)) {
+        return -1;
+    }
+    if (!CryptGenRandom(prov, (wsize) length, buf)) {
+        rc = -1;
+    }
+    CryptReleaseContext(prov, 0);
+    return rc;
+#else
+    int     i;
+
+    for (i = 0; i < length; i++) {
+        buf[i] = (char) (rand() & 0xff);
+    }
+#endif
+    return 0;
+}
+
+
+PUBLIC char *websCryptPassword(char *password, char *salt, int rounds)
+{
+    WebsBlowfish    bf;
+    char            *result, *key;
+    uint            *text;
+    ssize           len, limit;
+    int             i, j;
+
+    if (slen(password) > WEBS_MAX_PASSWORD) {
+        return 0;
+    }
+    key = sfmt("%s:%s", salt, password);
+    binit(&bf, (uchar*) key, slen(key));
+    len = sizeof(cipherText);
+    text = wdup(cipherText, len);
+
+    for (i = 0; i < rounds; i++) {
+        limit = len / sizeof(uint);
+        for (j = 0; j < limit; j += 2) {
+            bencrypt(&bf, &text[j], &text[j + 1]);
+        }
+    }
+    result = websEncode64Block((char*) text, len);
+    memset(&bf, 0, sizeof(bf));
+    memset(text, 0, len);
+    wfree(text);
+    return result;
+}
+
+
+PUBLIC char *websMakeSalt(ssize size)
+{
+    char    *chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    char    *rp, *result, *random;
+    ssize   clen, i;
+
+    size = (size + sizeof(int) - 1) & ~(sizeof(int) - 1);
+    random = walloc(size + 1);
+    result = walloc(size + 1);
+    if (websGetRandomBytes(random, size, 0) < 0) {
+        wfree(random);
+        wfree(result);
+        return 0;
+    }
+    clen = slen(chars);
+    for (i = 0, rp = result; i < size; i++) {
+        *rp++ = chars[(random[i] & 0x7F) % clen];
+    }
+    *rp = '\0';
+    wfree(random);
+    return result;
+}
+
+
+/*
+    Format of hashed password is:
+
+    Algorithm: Rounds: Salt: Hash
+*/
+PUBLIC char *websMakePassword(char *password, int saltLength, int rounds)
+{
+    char    *salt;
+
+    if (slen(password) > WEBS_MAX_PASSWORD) {
+        return 0;
+    }
+    if (saltLength <= 0) {
+        saltLength = BLOWFISH_SALT_LENGTH;
+    }
+    if (rounds <= 0) {
+        rounds = BLOWFISH_ROUNDS;
+    }
+    salt = websMakeSalt(saltLength);
+    return sfmt("BF1:%05d:%s:%s", rounds, salt, websCryptPassword(password, salt, rounds));
+}
+
+
+PUBLIC bool websCheckPassword(char *plainTextPassword, char *passwordHash)
+{
+    char    *given, *rounds, *salt, *s1, *s2, *tok, *hash;
+    ssize   match;
+
+    if (!passwordHash || !plainTextPassword) {
+        return 0;
+    }
+    if (slen(plainTextPassword) > WEBS_MAX_PASSWORD) {
+        return 0;
+    }
+    stok(sclone(passwordHash), ":", &tok);
+    rounds = stok(NULL, ":", &tok);
+    salt = stok(NULL, ":", &tok);
+    hash = stok(NULL, ":", &tok);
+    if (!rounds || !salt || !hash) {
+        return 0;
+    }
+    given = websCryptPassword(plainTextPassword, salt, atoi(rounds));
+
+    match = slen(given) ^ slen(hash);
+    for (s1 = given, s2 = hash; *s1 && *s2; s1++, s2++) {
+        match |= (*s1 & 0xFF) ^ (*s2 & 0xFF);
+    }
+    return !match;
+}
+
+
+PUBLIC char *websReadPassword(char *prompt)
+{
+    char    *cp, *password, *result;
+
+#if ME_BSD_LIKE
+    char    passbuf[WEBS_MAX_PASSWORD];
+
+    if (!prompt || !*prompt) {
+        prompt = "Password: ";
+    }
+    if ((password = readpassphrase(prompt, passbuf, sizeof(passbuf), 0)) == 0) {
+        return 0;
+    }
+#elif ME_UNIX_LIKE
+    if (!prompt || !*prompt) {
+        prompt = "Password: ";
+    }
+    if ((password = getpass(prompt)) == 0) {
+        return 0;
+    }
+#elif ME_WIN_LIKE || VXWORKS
+    char    passbuf[WEBS_MAX_PASSWORD];
+    int     c, i;
+
+    if (!prompt || !*prompt) {
+        prompt = "Password: ";
+    }
+    fputs(prompt, stdout);
+    for (i = 0; i < (int) sizeof(passbuf) - 1; i++) {
+#if VXWORKS
+        c = getchar();
+#else
+        c = _getch();
+#endif
+        if (c == '\r' || c == EOF) {
+            break;
+        }
+        if ((c == '\b' || c == 127) && i > 0) {
+            passbuf[--i] = '\0';
+            fputs("\b \b", stdout);
+            i--;
+        } else if (c == 26) {           /* Control Z */
+            c = EOF;
+            break;
+        } else if (c == 3) {            /* Control C */
+            fputs("^C\n", stdout);
+            exit(255);
+        } else if (!iscntrl((uchar) c) && (i < (int) sizeof(passbuf) - 1)) {
+            passbuf[i] = c;
+            fputc('*', stdout);
+        } else {
+            fputc('', stdout);
+            i--;
+        }
+    }
+    if (c == EOF) {
+        return "";
+    }
+    fputc('\n', stdout);
+    passbuf[i] = '\0';
+    password = passbuf;
+#else
+    return 0;
+#endif
+    result = sclone(password);
+    for (cp = password; *cp; cp++) {
+        *cp = 0;
+    }
+    return result;
+}
+
 /*
     @copy   default
 
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -3023,7 +3734,7 @@ PUBLIC char *websEncode64Block(char *s, ssize len)
 
 /*
     file.c -- File handler
-  
+
     This module serves static file documents
  */
 
@@ -3043,6 +3754,7 @@ static void fileWriteEvent(Webs *wp);
 /*********************************** Code *************************************/
 /*
     Serve static files
+    Return true to indicate the request was handled, even for errors.
  */
 static bool fileHandler(Webs *wp)
 {
@@ -3067,7 +3779,7 @@ static bool fileHandler(Webs *wp)
         /* Code is already set for us by processContent() */
         websResponse(wp, wp->code, 0);
 
-    } else 
+    } else
 #endif /* !ME_ROM */
     {
         /*
@@ -3161,7 +3873,7 @@ static void fileWriteEvent(Webs *wp)
 
 
 #if !ME_ROM
-PUBLIC int websProcessPutData(Webs *wp)
+PUBLIC bool websProcessPutData(Webs *wp)
 {
     ssize   nbytes;
 
@@ -3173,14 +3885,12 @@ PUBLIC int websProcessPutData(Webs *wp)
     wp->putLen += nbytes;
     if (wp->putLen > ME_GOAHEAD_LIMIT_PUT) {
         websError(wp, HTTP_CODE_REQUEST_TOO_LARGE | WEBS_CLOSE, "Put file too large");
-        return -1;
-    }
-    if (write(wp->putfd, wp->input.servp, (int) nbytes) != nbytes) {
+
+    } else if (write(wp->putfd, wp->input.servp, (int) nbytes) != nbytes) {
         websError(wp, HTTP_CODE_INTERNAL_SERVER_ERROR | WEBS_CLOSE, "Cannot write to file");
-        return -1;
     }
     websConsumeInput(wp, nbytes);
-    return 0;
+    return 1;
 }
 #endif
 
@@ -3248,7 +3958,7 @@ PUBLIC void websSetDocuments(char *dir)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -3280,7 +3990,11 @@ PUBLIC void websSetDocuments(char *dir)
 /******************************** Local Data **********************************/
 
 #if ME_ROM
-static WebsHash romFs;             /* Symbol table for web pages */
+/* 
+    Symbol table for web pages and files
+ */
+static WebsHash romFs;
+static WebsRomIndex *lookup(WebsHash fs, char *path);
 #endif
 
 /*********************************** Code *************************************/
@@ -3296,8 +4010,7 @@ PUBLIC int websFsOpen()
     for (wip = websRomIndex; wip->path; wip++) {
         strncpy(name, wip->path, ME_GOAHEAD_LIMIT_FILENAME);
         len = strlen(name) - 1;
-        if (len > 0 &&
-            (name[len] == '/' || name[len] == '\\')) {
+        if (len > 0 && (name[len] == '/' || name[len] == '\\')) {
             name[len] = '\0';
         }
         hashEnter(romFs, name, valueSymbol(wip), 0);
@@ -3319,12 +4032,10 @@ PUBLIC int websOpenFile(char *path, int flags, int mode)
 {
 #if ME_ROM
     WebsRomIndex    *wip;
-    WebsKey         *sp;
 
-    if ((sp = hashLookup(romFs, path)) == NULL) {
+    if ((wip = lookup(romFs, path)) == NULL) {
         return -1;
     }
-    wip = (WebsRomIndex*) sp->content.value.symbol;
     wip->pos = 0;
     return (int) (wip - websRomIndex);
 #else
@@ -3335,11 +4046,11 @@ PUBLIC int websOpenFile(char *path, int flags, int mode)
 
 PUBLIC void websCloseFile(int fd)
 {
-    if (fd >= 0) {
 #if !ME_ROM
+    if (fd >= 0) {
         close(fd);
-#endif
     }
+#endif
 }
 
 
@@ -3347,14 +4058,12 @@ PUBLIC int websStatFile(char *path, WebsFileInfo *sbuf)
 {
 #if ME_ROM
     WebsRomIndex    *wip;
-    WebsKey         *sp;
 
     assert(path && *path);
 
-    if ((sp = hashLookup(romFs, path)) == NULL) {
+    if ((wip = lookup(romFs, path)) == NULL) {
         return -1;
     }
-    wip = (WebsRomIndex*) sp->content.value.symbol;
     memset(sbuf, 0, sizeof(WebsFileInfo));
     sbuf->size = wip->size;
     if (wip->page == NULL) {
@@ -3366,12 +4075,11 @@ PUBLIC int websStatFile(char *path, WebsFileInfo *sbuf)
     int         rc;
 #if ME_WIN_LIKE
     ssize       len = slen(path) - 1;
-
     path = sclone(path);
     if (path[len] == '/') {
         path[len] = '\0';
     } else if (path[len] == '\\') {
-        path[len - 1] = '\0';
+        path[len] = '\0';
     }
     rc = stat(path, &s);
     wfree(path);
@@ -3383,8 +4091,8 @@ PUBLIC int websStatFile(char *path, WebsFileInfo *sbuf)
     }
     sbuf->size = (ssize) s.st_size;
     sbuf->mtime = s.st_mtime;
-    sbuf->isDir = s.st_mode & S_IFDIR;                                                                     
-    return 0;  
+    sbuf->isDir = s.st_mode & S_IFDIR;
+    return 0;
 #endif
 }
 
@@ -3483,13 +4191,39 @@ PUBLIC ssize websWriteFile(int fd, char *buf, ssize size)
 }
 
 
+#if ME_ROM
+static WebsRomIndex *lookup(WebsHash fs, char *path)
+{
+    WebsKey     *sp;
+    ssize       len;
+
+    if ((sp = hashLookup(fs, path)) == NULL) {
+        if (path[0] != '/') {
+            path = sfmt("/%s", path);
+        } else {
+            path = sclone(path);
+        }
+        len = slen(path) - 1;
+        if (path[len] == '/') {
+            path[len] = '\0';
+        }
+        if ((sp = hashLookup(fs, path)) == NULL) {
+            wfree(path);
+            return 0;
+        }
+        wfree(path);
+    }
+    return (WebsRomIndex*) sp->content.value.symbol;
+}
+#endif
+
 /*
     @copy   default
 
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -3638,6 +4372,7 @@ MAIN(goahead, int argc, char **argv, char **envp)
             if (strstr(endpoint, "https")) continue;
 #endif
             if (websListen(endpoint) < 0) {
+                wfree(endpoints);
                 return -1;
             }
         }
@@ -3709,11 +4444,10 @@ static void usage() {
 }
 
 
-static void initPlatform() 
+static void initPlatform()
 {
 #if ME_UNIX_LIKE
     signal(SIGTERM, sigHandler);
-    signal(SIGKILL, sigHandler);
     #ifdef SIGPIPE
         signal(SIGPIPE, SIG_IGN);
     #endif
@@ -3758,7 +4492,7 @@ static int windowsInit()
     /*
         Create a window just so we can have a taskbar to close this web server
      */
-    hwnd = CreateWindow(ME_NAME, ME_TITLE, WS_MINIMIZE | WS_POPUPWINDOW, CW_USEDEFAULT, 
+    hwnd = CreateWindow(ME_NAME, ME_TITLE, WS_MINIMIZE | WS_POPUPWINDOW, CW_USEDEFAULT,
         0, 0, 0, NULL, NULL, inst, NULL);
     if (hwnd == NULL) {
         return -1;
@@ -3850,7 +4584,7 @@ static LRESULT CALLBACK websAboutProc(HWND hwndDlg, uint msg, uint wp, long lp)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -3925,7 +4659,7 @@ static uchar charMatch[256] = {
     0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,
     0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,
     0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,
-    0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c 
+    0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c
 };
 
 /*
@@ -4064,15 +4798,15 @@ static int      pruneId;                            /* Callback ID */
 /**************************** Forward Declarations ****************************/
 
 static void     checkTimeout(void *arg, int id);
-static WebsTime dateParse(WebsTime tip, char *cmd);
 static bool     filterChunkData(Webs *wp);
-static WebsTime getTimeSinceMark(Webs *wp);
+static int      getTimeSinceMark(Webs *wp);
 static char     *getToken(Webs *wp, char *delim);
 static void     parseFirstLine(Webs *wp);
 static void     parseHeaders(Webs *wp);
 static bool     processContent(Webs *wp);
 static bool     parseIncoming(Webs *wp);
-static void     pruneCache();
+static void     pruneSessions();
+static void     freeSessions();
 static void     readEvent(Webs *wp);
 static void     reuseConn(Webs *wp);
 static void     setFileLimits();
@@ -4094,6 +4828,8 @@ PUBLIC int websOpen(char *documents, char *routeFile)
 
     websOsOpen();
     websRuntimeOpen();
+    websTimeOpen();
+    websFsOpen();
     logOpen();
     setFileLimits();
     socketOpen();
@@ -4104,12 +4840,12 @@ PUBLIC int websOpen(char *documents, char *routeFile)
     if (sslOpen() < 0) {
         return -1;
     }
-#endif 
+#endif
     if ((sessions = hashCreate(-1)) < 0) {
         return -1;
     }
     if (!websDebug) {
-        pruneId = websStartEvent(WEBS_SESSION_PRUNE, (WebsEventProc) pruneCache, 0);
+        pruneId = websStartEvent(WEBS_SESSION_PRUNE, (WebsEventProc) pruneSessions, 0);
     }
     if (documents) {
         websSetDocuments(documents);
@@ -4117,7 +4853,7 @@ PUBLIC int websOpen(char *documents, char *routeFile)
     if (websOpenRoute() < 0) {
         return -1;
     }
-#if ME_GOAHEAD_CGI && !ME_ROM
+#if ME_GOAHEAD_CGI
     websCgiOpen();
 #endif
     websOptionsOpen();
@@ -4134,7 +4870,6 @@ PUBLIC int websOpen(char *documents, char *routeFile)
         return -1;
     }
 #endif
-    websFsOpen();
     if (websLoad(routeFile) < 0) {
         return -1;
     }
@@ -4159,7 +4894,7 @@ PUBLIC int websOpen(char *documents, char *routeFile)
 }
 
 
-PUBLIC void websClose() 
+PUBLIC void websClose()
 {
     Webs    *wp;
     int     i;
@@ -4173,8 +4908,7 @@ PUBLIC void websClose()
         pruneId = -1;
     }
     if (sessions >= 0) {
-        hashFree(sessions);
-        sessions = -1;
+        freeSessions();
     }
     for (i = 0; i < listenMax; i++) {
         if (listens[i] >= 0) {
@@ -4210,6 +4944,7 @@ PUBLIC void websClose()
     hashFree(websMime);
     socketClose();
     logClose();
+    websTimeClose();
     websRuntimeClose();
     websOsClose();
 }
@@ -4255,6 +4990,7 @@ static void initWebs(Webs *wp, int flags, int reuse)
     wp->cgifd = -1;
 #endif
 #if ME_GOAHEAD_UPLOAD
+    wp->files = -1;
     wp->upfd = -1;
 #endif
     if (reuse) {
@@ -4302,12 +5038,6 @@ static void termWebs(Webs *wp, int reuse)
             wp->sid = -1;
         }
     }
-#if ME_GOAHEAD_CGI
-    if (wp->cgifd >= 0) {
-        close(wp->cgifd);
-        wp->cgifd = -1;
-    }
-#endif
 #if !ME_ROM
     if (wp->putfd >= 0) {
         close(wp->putfd);
@@ -4317,6 +5047,16 @@ static void termWebs(Webs *wp, int reuse)
             error("Cannot rename PUT file from %s to %s", wp->putname, wp->filename);
         }
     }
+#endif
+#if ME_GOAHEAD_CGI
+    if (wp->cgifd >= 0) {
+        close(wp->cgifd);
+        wp->cgifd = -1;
+    }
+    wfree(wp->cgiStdin);
+#endif
+#if ME_GOAHEAD_UPLOAD
+    wfree(wp->clientFilename);
 #endif
     websPageClose(wp);
     if (wp->timeout >= 0 && !reuse) {
@@ -4332,7 +5072,6 @@ static void termWebs(Webs *wp, int reuse)
     wfree(wp->ext);
     wfree(wp->filename);
     wfree(wp->host);
-    wfree(wp->inputFile);
     wfree(wp->method);
     wfree(wp->password);
     wfree(wp->path);
@@ -4350,9 +5089,6 @@ static void termWebs(Webs *wp, int reuse)
     wfree(wp->uploadTmp);
     wfree(wp->uploadVar);
 #endif
-#if ME_GOAHEAD_CGI
-    wfree(wp->cgiStdin);
-#endif
 #if ME_GOAHEAD_DIGEST
     wfree(wp->cnonce);
     wfree(wp->digestUri);
@@ -4364,7 +5100,7 @@ static void termWebs(Webs *wp, int reuse)
     hashFree(wp->vars);
 
 #if ME_GOAHEAD_UPLOAD
-    if (wp->files) {
+    if (wp->files >= 0) {
         websFreeUpload(wp);
     }
 #endif
@@ -4418,18 +5154,21 @@ PUBLIC void websFree(Webs *wp)
 /*
     Called when the request is complete. Note: it may not have fully drained from the tx buffer.
  */
-PUBLIC void websDone(Webs *wp) 
+PUBLIC void websDone(Webs *wp)
 {
     WebsSocket  *sp;
 
     assert(wp);
     assert(websValid(wp));
 
-    if (wp->flags & WEBS_FINALIZED) {
+    if (wp->finalized) {
         return;
     }
     assert(WEBS_BEGIN <= wp->state && wp->state <= WEBS_COMPLETE);
+#if DEPRECATED || 1
     wp->flags |= WEBS_FINALIZED;
+#endif
+    wp->finalized = 1;
 
     if (wp->state < WEBS_COMPLETE) {
         /*
@@ -4443,14 +5182,13 @@ PUBLIC void websDone(Webs *wp)
 #if ME_GOAHEAD_ACCESS_LOG
     logRequest(wp, wp->code);
 #endif
-    websPageClose(wp);
     if (!(wp->flags & WEBS_RESPONSE_TRACED)) {
         trace(3 | WEBS_RAW_MSG, "Request complete: code %d", wp->code);
     }
 }
 
 
-static void complete(Webs *wp, int reuse) 
+static int complete(Webs *wp, int reuse)
 {
     assert(wp);
     assert(websValid(wp));
@@ -4460,22 +5198,12 @@ static void complete(Webs *wp, int reuse)
         reuseConn(wp);
         socketCreateHandler(wp->sid, SOCKET_READABLE, socketEvent, wp);
         trace(5, "Keep connection alive");
-        return;
+        return 1;
     }
     trace(5, "Close connection");
-    assert(wp->timeout >= 0);
-    websCancelTimeout(wp);
-#if ME_COM_SSL
-    sslFree(wp);
-#endif
-    if (wp->sid >= 0) {
-        socketDeleteHandler(wp->sid);
-        socketCloseConnection(wp->sid);
-        wp->sid = -1;
-    }
-    bufFlush(&wp->rxbuf);
     wp->state = WEBS_BEGIN;
     wp->flags |= WEBS_CLOSED;
+    return 0;
 }
 
 
@@ -4533,7 +5261,7 @@ PUBLIC int websListen(char *endpoint)
 
 
 /*
-    Accept a new connection from ipaddr:port 
+    Accept a new connection from ipaddr:port
  */
 PUBLIC int websAccept(int sid, char *ipaddr, int port, int listenSid)
 {
@@ -4571,9 +5299,9 @@ PUBLIC int websAccept(int sid, char *ipaddr, int port, int listenSid)
 #if ME_GOAHEAD_LEGACY
     /*
         Check if this is a request from a browser on this system. This is useful to know for permitting administrative
-        operations only for local access 
+        operations only for local access
      */
-    if (strcmp(wp->ipaddr, "127.0.0.1") == 0 || strcmp(wp->ipaddr, websIpAddr) == 0 || 
+    if (strcmp(wp->ipaddr, "127.0.0.1") == 0 || strcmp(wp->ipaddr, websIpAddr) == 0 ||
             strcmp(wp->ipaddr, websHost) == 0) {
         wp->flags |= WEBS_LOCAL;
     }
@@ -4604,7 +5332,7 @@ PUBLIC int websAccept(int sid, char *ipaddr, int port, int listenSid)
 
 /*
     The webs socket handler. Called in response to I/O. We just pass control to the relevant read or write handler. A
-    pointer to the webs structure is passed as a (void*) in wptr.  
+    pointer to the webs structure is passed as a (void*) in wptr.
  */
 static void socketEvent(int sid, int mask, void *wptr)
 {
@@ -4619,10 +5347,10 @@ static void socketEvent(int sid, int mask, void *wptr)
     }
     if (mask & SOCKET_READABLE) {
         readEvent(wp);
-    } 
+    }
     if (mask & SOCKET_WRITABLE) {
         writeEvent(wp);
-    } 
+    }
     if (wp->flags & WEBS_CLOSED) {
         websFree(wp);
         /* WARNING: wp not valid here */
@@ -4678,7 +5406,7 @@ static void readEvent(Webs *wp)
         wp->lastRead = nbytes;
         bufAdjustEnd(rxbuf, nbytes);
         bufAddNull(rxbuf);
-    } 
+    }
     if (nbytes > 0 || wp->state > WEBS_BEGIN) {
         websPump(wp);
     }
@@ -4690,8 +5418,9 @@ static void readEvent(Webs *wp)
             if (wp->state > WEBS_BEGIN) {
                 websError(wp, HTTP_CODE_COMMS_ERROR, "Read error: connection lost");
                 websPump(wp);
+            } else {
+                complete(wp, 0);
             }
-            complete(wp, 0);
         } else {
             socketDeleteHandler(wp->sid);
         }
@@ -4716,6 +5445,7 @@ PUBLIC void websPump(Webs *wp)
             break;
         case WEBS_READY:
             if (!websRunRequest(wp)) {
+                /* Reroute if the handler re-wrote the request */
                 websRouteRequest(wp);
                 wp->state = WEBS_READY;
                 canProceed = 1;
@@ -4727,8 +5457,7 @@ PUBLIC void websPump(Webs *wp)
             /* Nothing to do until websDone is called */
             return;
         case WEBS_COMPLETE:
-            complete(wp, 1);
-            canProceed = bufLen(&wp->rxbuf) != 0;
+            canProceed = complete(wp, 1);
             break;
         }
     }
@@ -4742,7 +5471,9 @@ static bool parseIncoming(Webs *wp)
 
     rxbuf = &wp->rxbuf;
     while (*rxbuf->servp == '\r' || *rxbuf->servp == '\n') {
-        bufGetc(rxbuf);
+        if (bufGetc(rxbuf) < 0) {
+            break;
+        }
     }
     if ((end = strstr((char*) wp->rxbuf.servp, "\r\n\r\n")) == 0) {
         if (bufLen(&wp->rxbuf) >= ME_GOAHEAD_LIMIT_HEADER) {
@@ -4750,7 +5481,7 @@ static bool parseIncoming(Webs *wp)
             return 1;
         }
         return 0;
-    }    
+    }
     trace(3 | WEBS_RAW_MSG, "\n<<< Request\n");
     c = *end;
     *end = '\0';
@@ -4775,7 +5506,6 @@ static bool parseIncoming(Webs *wp)
     if (wp->state == WEBS_COMPLETE) {
         return 1;
     }
-#if !ME_ROM
 #if ME_GOAHEAD_CGI
     if (wp->route && wp->route->handler && wp->route->handler->service == cgiHandler) {
         if (smatch(wp->method, "POST")) {
@@ -4787,9 +5517,11 @@ static bool parseIncoming(Webs *wp)
         }
     }
 #endif
+#if !ME_ROM
     if (smatch(wp->method, "PUT")) {
         WebsStat    sbuf;
         wp->code = (stat(wp->filename, &sbuf) == 0 && sbuf.st_mode & S_IFDIR) ? HTTP_CODE_NO_CONTENT : HTTP_CODE_CREATED;
+        wfree(wp->putname);
         wp->putname = websTempFile(ME_GOAHEAD_PUT_DIR, "put");
         if ((wp->putfd = open(wp->putname, O_BINARY | O_WRONLY | O_CREAT | O_BINARY, 0644)) < 0) {
             error("Cannot create PUT filename %s", wp->putname);
@@ -4850,7 +5582,6 @@ static void parseFirstLine(Webs *wp)
         return;
     }
     if ((wp->path = websValidateUriPath(path)) == 0) {
-        error("Cannot normalize URL: %s", url);
         websError(wp, HTTP_CODE_BAD_REQUEST | WEBS_CLOSE | WEBS_NOLOG, "Bad URL");
         wfree(buf);
         return;
@@ -4868,7 +5599,7 @@ static void parseFirstLine(Webs *wp)
     } else if (smatch(protoVer, "HTTP/1.0")) {
         wp->flags &= ~(WEBS_HTTP11);
     } else {
-        protoVer = sclone("HTTP/1.1");
+        protoVer = "HTTP/1.1";
         websError(wp, WEBS_CLOSE | HTTP_CODE_NOT_ACCEPTABLE, "Unsupported HTTP protocol");
     }
     wp->protoVersion = sclone(protoVer);
@@ -4886,12 +5617,12 @@ static void parseFirstLine(Webs *wp)
  */
 static void parseHeaders(Webs *wp)
 {
-    char    *upperKey, *cp, *key, *value, *tok;
+    char    *combined, *prior, *upperKey, *cp, *key, *value, *tok;
     int     count;
 
     assert(websValid(wp));
 
-    /* 
+    /*
         Parse the header and create the Http header keyword variables
         We rewrite the header as we go for non-local requests.  NOTE: this
         modifies the header string directly and tokenizes each line with '\0'.
@@ -4917,7 +5648,7 @@ static void parseHeaders(Webs *wp)
         slower(key);
 
         /*
-            Create a variable (CGI) for each line in the header
+            Create a header variable for each line in the header
          */
         upperKey = sfmt("HTTP_%s", key);
         for (cp = upperKey; *cp; cp++) {
@@ -4926,18 +5657,27 @@ static void parseHeaders(Webs *wp)
             }
         }
         supper(upperKey);
-        websSetVar(wp, upperKey, value);
+        if ((prior = websGetVar(wp, upperKey, 0)) != 0) {
+            combined = sfmt("%s, %s", prior, value);
+            websSetVar(wp, upperKey, combined);
+            wfree(combined);
+        } else {
+            websSetVar(wp, upperKey, value);
+        }
         wfree(upperKey);
 
         /*
             Track the requesting agent (browser) type
          */
         if (strcmp(key, "user-agent") == 0) {
+            wfree(wp->userAgent);
             wp->userAgent = sclone(value);
 
         } else if (scaselesscmp(key, "authorization") == 0) {
+            wfree(wp->authType);
             wp->authType = sclone(value);
             ssplit(wp->authType, " \t", &tok);
+            wfree(wp->authDetails);
             wp->authDetails = sclone(tok);
             slower(wp->authType);
 
@@ -4967,6 +5707,7 @@ static void parseHeaders(Webs *wp)
             }
 
         } else if (strcmp(key, "content-type") == 0) {
+            wfree(wp->contentType);
             wp->contentType = sclone(value);
             if (strstr(value, "application/x-www-form-urlencoded")) {
                 wp->flags |= WEBS_FORM;
@@ -4978,7 +5719,13 @@ static void parseHeaders(Webs *wp)
 
         } else if (strcmp(key, "cookie") == 0) {
             wp->flags |= WEBS_COOKIE;
-            wp->cookie = sclone(value);
+            if (wp->cookie) {
+                char *prior = wp->cookie;
+                wp->cookie = sfmt("%s; %s", prior, value);
+                wfree(prior);
+            } else {
+                wp->cookie = sclone(value);
+            }
 
         } else if (strcmp(key, "host") == 0) {
             if ((int) strspn(value, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-.[]:")
@@ -4990,20 +5737,16 @@ static void parseHeaders(Webs *wp)
             wp->host = sclone(value);
 
         } else if (strcmp(key, "if-modified-since") == 0) {
-            char     *cmd;
-            WebsTime tip = 0;
-
             if ((cp = strchr(value, ';')) != NULL) {
                 *cp = '\0';
             }
-            cmd = sfmt("%s", value);
-            wp->since = dateParse(tip, cmd);
-            wfree(cmd);
+            websParseDateTime(&wp->since, value, 0);
 
         /*
             Yes Veronica, the HTTP spec does misspell Referrer
          */
         } else if (strcmp(key, "referer") == 0) {
+            wfree(wp->referrer);
             wp->referrer = sclone(value);
 
         } else if (strcmp(key, "transfer-encoding") == 0) {
@@ -5027,34 +5770,45 @@ static void parseHeaders(Webs *wp)
 
 static bool processContent(Webs *wp)
 {
-    if (!filterChunkData(wp)) {
-        return 0;
+    bool    canProceed;
+
+    canProceed = filterChunkData(wp);
+    if (!canProceed || wp->finalized) {
+        return canProceed;
     }
-#if ME_GOAHEAD_CGI && !ME_ROM
-    if (wp->cgifd >= 0 && websProcessCgiData(wp) < 0) {
-        return 0;
-    }
-#endif
-#if ME_GOAHEAD_UPLOAD
-    if ((wp->flags & WEBS_UPLOAD) && websProcessUploadData(wp) < 0) {
-        return 0;
-    }
-#endif
 #if !ME_ROM
-    if (wp->putfd >= 0 && websProcessPutData(wp) < 0) {
-        return 0;
+#if ME_GOAHEAD_UPLOAD
+    if (wp->flags & WEBS_UPLOAD) {
+        canProceed = websProcessUploadData(wp);
+        if (!canProceed || wp->finalized) {
+            return canProceed;
+        }
     }
+#endif
+    if (wp->putfd >= 0) {
+        canProceed = websProcessPutData(wp);
+        if (!canProceed || wp->finalized) {
+            return canProceed;
+        }
+    }
+#if ME_GOAHEAD_CGI
+    if (wp->cgifd >= 0) {
+        canProceed = websProcessCgiData(wp);
+        if (!canProceed || wp->finalized) {
+            return canProceed;
+        }
+    }
+#endif
 #endif
     if (wp->eof) {
         wp->state = WEBS_READY;
-        /* 
-            Prevent reading content from the next request 
+        /*
+            Prevent reading content from the next request
             The handler may not have been created if all the content was read in the initial read. No matter.
          */
         socketDeleteHandler(wp->sid);
-        return 1;
     }
-    return 0;
+    return canProceed;
 }
 
 
@@ -5083,13 +5837,11 @@ static bool filterChunkData(Webs *wp)
     ssize       chunkSize;
     char        *start, *cp;
     ssize       len, nbytes;
-    bool        added;
     int         bad;
 
     assert(wp);
     assert(wp->rxbuf.buf);
     rxbuf = &wp->rxbuf;
-    added = 0;
 
     while (bufLen(rxbuf) > 0) {
         switch (wp->rxChunkState) {
@@ -5107,7 +5859,7 @@ static bool filterChunkData(Webs *wp)
             return 1;
 
         case WEBS_CHUNK_START:
-            /*  
+            /*
                 Expect: "\r\nSIZE.*\r\n"
              */
             if (bufLen(rxbuf) < 5) {
@@ -5117,17 +5869,18 @@ static bool filterChunkData(Webs *wp)
             bad = (start[0] != '\r' || start[1] != '\n');
             for (cp = &start[2]; cp < rxbuf->endp && *cp != '\n'; cp++) {}
             if (*cp != '\n' && (cp - start) < 80) {
+                /* Insufficient data */
                 return 0;
             }
             bad += (cp[-1] != '\r' || cp[0] != '\n');
             if (bad) {
                 websError(wp, WEBS_CLOSE | HTTP_CODE_BAD_REQUEST, "Bad chunk specification");
-                return 0;
+                return 1;
             }
             chunkSize = hextoi(&start[2]);
             if (!isxdigit((uchar) start[2]) || chunkSize < 0) {
                 websError(wp, WEBS_CLOSE | HTTP_CODE_BAD_REQUEST, "Bad chunk specification");
-                return 0;
+                return 1;
             }
             if (chunkSize == 0) {
                 /* On the last chunk, consume the final "\r\n" */
@@ -5139,7 +5892,7 @@ static bool filterChunkData(Webs *wp)
                 bad += (cp[-1] != '\r' || cp[0] != '\n');
                 if (bad) {
                     websError(wp, WEBS_CLOSE | HTTP_CODE_BAD_REQUEST, "Bad final chunk specification");
-                    return 0;
+                    return 1;
                 }
             }
             bufAdjustStart(rxbuf, cp - start + 1);
@@ -5147,6 +5900,7 @@ static bool filterChunkData(Webs *wp)
             wp->rxRemaining = chunkSize;
             if (chunkSize == 0) {
 #if ME_GOAHEAD_LEGACY
+                wfree(wp->query);
                 wp->query = sclone(bufStart(&wp->input));
 #endif
                 wp->eof = 1;
@@ -5159,7 +5913,10 @@ static bool filterChunkData(Webs *wp)
         case WEBS_CHUNK_DATA:
             len = min(bufLen(rxbuf), wp->rxRemaining);
             nbytes = min(bufRoom(&wp->input), len);
-            nbytes = bufPutBlk(&wp->input, rxbuf->servp, nbytes);
+            if (len > 0 && (nbytes = bufPutBlk(&wp->input, rxbuf->servp, nbytes)) == 0) {
+                websError(wp, HTTP_CODE_REQUEST_TOO_LARGE | WEBS_CLOSE, "Too big");
+                return 1;
+            }
             bufAddNull(&wp->input);
             bufAdjustStart(rxbuf, nbytes);
             wp->rxRemaining -= nbytes;
@@ -5167,14 +5924,10 @@ static bool filterChunkData(Webs *wp)
                 wp->rxChunkState = WEBS_CHUNK_START;
                 bufCompact(rxbuf);
             }
-            added = 1;
-            if (nbytes < len) {
-                return added;
-            }
             break;
         }
     }
-    return added;
+    return 0;
 }
 
 
@@ -5184,7 +5937,7 @@ static bool filterChunkData(Webs *wp)
  */
 PUBLIC void websServiceEvents(int *finished)
 {
-    WebsTime    delay, nextEvent;
+    int     delay, nextEvent;
 
     if (finished) {
         *finished = 0;
@@ -5194,7 +5947,7 @@ PUBLIC void websServiceEvents(int *finished)
         if (socketSelect(-1, delay)) {
             socketProcess();
         }
-#if ME_GOAHEAD_CGI && !ME_ROM
+#if ME_GOAHEAD_CGI
         delay = websCgiPoll();
 #else
         delay = MAXINT;
@@ -5295,6 +6048,7 @@ PUBLIC void websSetQueryVars(Webs *wp)
         split pairs at the '='.  Note: we rely on wp->decodedQuery preserving the decoded values in the symbol table.
      */
     if (wp->query && *wp->query) {
+        wfree(wp->decodedQuery);
         wp->decodedQuery = sclone(wp->query);
         addFormVars(wp, wp->decodedQuery);
     }
@@ -5303,7 +6057,7 @@ PUBLIC void websSetQueryVars(Webs *wp)
 
 /*
     Define a webs (CGI) variable for this connection. Also create in relevant scripting engines. Note: the incoming
-    value may be volatile.  
+    value may be volatile.
  */
 PUBLIC void websSetVarFmt(Webs *wp, char *var, char *fmt, ...)
 {
@@ -5363,7 +6117,7 @@ PUBLIC bool websTestVar(Webs *wp, char *var)
 
 /*
     Get a webs variable but return a default value if string not found.  Note, defaultGetValue can be NULL to permit
-    testing existence.  
+    testing existence.
  */
 PUBLIC char *websGetVar(Webs *wp, char *var, char *defaultGetValue)
 {
@@ -5371,7 +6125,7 @@ PUBLIC char *websGetVar(Webs *wp, char *var, char *defaultGetValue)
 
     assert(websValid(wp));
     assert(var && *var);
- 
+
     if ((sp = hashLookup(wp->vars, var)) != NULL) {
         assert(sp->content.type == string);
         if (sp->content.value.string) {
@@ -5391,7 +6145,7 @@ PUBLIC int websCompareVar(Webs *wp, char *var, char *value)
 {
     assert(websValid(wp));
     assert(var && *var);
- 
+
     if (strcmp(value, websGetVar(wp, var, " __UNDEF__ ")) == 0) {
         return 1;
     }
@@ -5419,7 +6173,7 @@ PUBLIC void websCancelTimeout(Webs *wp)
 PUBLIC void websResponse(Webs *wp, int code, char *message)
 {
     ssize   len;
-    
+
     assert(websValid(wp));
     websSetStatus(wp, code);
 
@@ -5454,7 +6208,7 @@ static char *makeUri(char *scheme, char *host, int port, char *path)
  */
 PUBLIC void websRedirect(Webs *wp, char *uri)
 {
-    char    *message, *location, *uribuf, *scheme, *host, *pstr;
+    char    *message, *location, *scheme, *host, *pstr;
     char    hostbuf[ME_GOAHEAD_LIMIT_STRING];
     bool    secure, fullyQualified;
     ssize   len;
@@ -5462,7 +6216,7 @@ PUBLIC void websRedirect(Webs *wp, char *uri)
 
     assert(websValid(wp));
     assert(uri);
-    message = location = uribuf = NULL;
+    message = location = NULL;
 
     originalPort = port = 0;
     if ((host = (wp->host ? wp->host : websHostUrl)) != 0) {
@@ -5514,7 +6268,6 @@ PUBLIC void websRedirect(Webs *wp, char *uri)
     websDone(wp);
     wfree(message);
     wfree(location);
-    wfree(uribuf);
 }
 
 
@@ -5545,8 +6298,9 @@ PUBLIC int websRedirectByStatus(Webs *wp, int status)
 }
 
 
-/*  
+/*
     Escape HTML to escape defined characters (prevent cross-site scripting)
+    Returns an allocated string.
  */
 PUBLIC char *websEscapeHtml(char *html)
 {
@@ -5564,7 +6318,7 @@ PUBLIC char *websEscapeHtml(char *html)
     if ((result = walloc(len)) == 0) {
         return 0;
     }
-    /*  
+    /*
         Leave room for the biggest expansion
      */
     op = result;
@@ -5608,78 +6362,11 @@ PUBLIC char *websEscapeHtml(char *html)
 }
 
 
-/*  
-    Output an error message and cleanup
- */
-PUBLIC void websError(Webs *wp, int code, char *fmt, ...)
-{
-    va_list     args;
-    char        *msg, *buf;
-    char        *encoded;
-
-    assert(wp);
-    if (code & WEBS_CLOSE) {
-        wp->flags &= ~WEBS_KEEP_ALIVE;
-    }
-    code &= ~(WEBS_CLOSE | WEBS_NOLOG);
-#if !ME_ROM
-    if (wp->putfd >= 0) {
-        close(wp->putfd);
-        wp->putfd = -1;
-    }
-#endif
-    if (wp->rxRemaining && code != 200 && code != 301 && code != 302 && code != 401) {
-        /* Close connection so we don't have to consume remaining content */
-        wp->flags &= ~WEBS_KEEP_ALIVE;
-    }
-    encoded = websEscapeHtml(wp->url);
-    wfree(wp->url);
-    wp->url = encoded;
-    if (fmt) {
-        if (!(code & WEBS_NOLOG)) {
-            va_start(args, fmt);
-            msg = sfmtv(fmt, args);
-            va_end(args);
-            trace(2, "%s", msg);
-            wfree(msg);
-        }
-        buf = sfmt("\
-<html>\r\n\
-    <head><title>Document Error: %s</title></head>\r\n\
-    <body>\r\n\
-        <h2>Access Error: %s</h2>\r\n\
-    </body>\r\n\
-</html>\r\n", websErrorMsg(code), websErrorMsg(code));
-    } else {
-        buf = 0;
-    }
-    websResponse(wp, code, buf);
-    wfree(buf);
-}
-
-
-/*
-    Return the error message for a given code
- */
-PUBLIC char *websErrorMsg(int code)
-{
-    WebsError   *ep;
-
-    assert(code >= 0);
-    for (ep = websErrors; ep->code; ep++) {
-        if (code == ep->code) {
-            return ep->msg;
-        }
-    }
-    return websErrorMsg(HTTP_CODE_INTERNAL_SERVER_ERROR);
-}
-
-
 PUBLIC int websWriteHeader(Webs *wp, char *key, char *fmt, ...)
 {
     va_list     vargs;
     char        *buf;
-    
+
     assert(websValid(wp));
 
     if (!(wp->flags & WEBS_RESPONSE_TRACED)) {
@@ -5719,7 +6406,7 @@ PUBLIC int websWriteHeader(Webs *wp, char *key, char *fmt, ...)
 
 PUBLIC void websSetStatus(Webs *wp, int code)
 {
-    wp->code = code & ~WEBS_CLOSE;
+    wp->code = (code & WEBS_CODE_MASK);
     if (code & WEBS_CLOSE) {
         wp->flags &= ~WEBS_KEEP_ALIVE;
     }
@@ -5733,21 +6420,20 @@ PUBLIC void websSetStatus(Webs *wp, int code)
 PUBLIC void websWriteHeaders(Webs *wp, ssize length, char *location)
 {
     WebsKey     *key;
-    char        *date;
+    char        *date, *protoVersion;
 
     assert(websValid(wp));
 
     if (!(wp->flags & WEBS_HEADERS_CREATED)) {
-        if (!wp->protoVersion) {
-            wp->protoVersion = sclone("HTTP/1.0");
+        protoVersion = wp->protoVersion;
+        if (!protoVersion) {
+            protoVersion = "HTTP/1.0";
             wp->flags &= ~WEBS_KEEP_ALIVE;
         }
-        websWriteHeader(wp, NULL, "%s %d %s", wp->protoVersion, wp->code, websErrorMsg(wp->code));
-        /*
-            The Embedthis Open Source license does not permit modification of the Server header
-         */
+        websWriteHeader(wp, NULL, "%s %d %s", protoVersion, wp->code, websErrorMsg(wp->code));
+#if !ME_GOAHEAD_STEALTH
         websWriteHeader(wp, "Server", "GoAhead-http");
-
+#endif
         if ((date = websGetDateString(NULL)) != NULL) {
             websWriteHeader(wp, "Date", "%s", date);
             wfree(date);
@@ -5755,11 +6441,12 @@ PUBLIC void websWriteHeaders(Webs *wp, ssize length, char *location)
         if (wp->authResponse) {
             websWriteHeader(wp, "WWW-Authenticate", "%s", wp->authResponse);
         }
-        if (smatch(wp->method, "HEAD")) {
-            websWriteHeader(wp, "Content-Length", "%d", (int) length);                                           
-        } else if (length >= 0) {                                                                                    
-            if (!((100 <= wp->code && wp->code <= 199) || wp->code == 204 || wp->code == 304)) {
-                websWriteHeader(wp, "Content-Length", "%d", (int) length);                                           
+        if (length >= 0) {
+            if (smatch(wp->method, "HEAD")) {
+                websWriteHeader(wp, "Content-Length", "%d", (int) length);
+            } else if (!((100 <= wp->code && wp->code <= 199) || wp->code == 204 || wp->code == 304)) {
+                /* Server must not emit a content length header for 1XX, 204 and 304 status */
+                websWriteHeader(wp, "Content-Length", "%d", (int) length);
             }
         }
         wp->txLen = length;
@@ -5769,7 +6456,7 @@ PUBLIC void websWriteHeaders(Webs *wp, ssize length, char *location)
         if (wp->flags & WEBS_KEEP_ALIVE) {
             websWriteHeader(wp, "Connection", "keep-alive");
         } else {
-            websWriteHeader(wp, "Connection", "close");   
+            websWriteHeader(wp, "Connection", "close");
         }
         if (location) {
             websWriteHeader(wp, "Location", "%s", location);
@@ -5789,7 +6476,7 @@ PUBLIC void websWriteHeaders(Webs *wp, ssize length, char *location)
             wfree(etok);
         }
 #endif
-#ifdef UNUSED_ME_GOAHEAD_XFRAME_HEADER
+#ifdef ME_GOAHEAD_XFRAME_HEADER
         if (*ME_GOAHEAD_XFRAME_HEADER) {
             websWriteHeader(wp, "X-Frame-Options", "%s", ME_GOAHEAD_XFRAME_HEADER);
         }
@@ -5829,7 +6516,7 @@ PUBLIC ssize websWrite(Webs *wp, char *fmt, ...)
     va_list     vargs;
     char        *buf;
     ssize       rc;
-    
+
     assert(websValid(wp));
     assert(fmt && *fmt);
 
@@ -5851,7 +6538,7 @@ PUBLIC ssize websWrite(Webs *wp, char *fmt, ...)
 
 
 /*
-    Non-blocking write to socket. 
+    Non-blocking write to socket.
     Returns number of bytes written. Returns -1 on errors. May return short.
  */
 PUBLIC ssize websWriteSocket(Webs *wp, char *buf, ssize size)
@@ -5870,7 +6557,7 @@ PUBLIC ssize websWriteSocket(Webs *wp, char *buf, ssize size)
         if ((written = sslWrite(wp, buf, size)) < 0) {
             return written;
         }
-    } else 
+    } else
 #endif
     if ((written = socketWrite(wp->sid, buf, size)) < 0) {
         return written;
@@ -5965,8 +6652,8 @@ PUBLIC int websFlush(Webs *wp, bool block)
     }
     op = &wp->output;
     if (wp->flags & WEBS_CHUNKING) {
-        trace(6, "websFlush chunking finalized %d", wp->flags & WEBS_FINALIZED);
-        if (flushChunkData(wp) && wp->flags & WEBS_FINALIZED) {
+        trace(6, "websFlush chunking finalized %d", wp->finalized);
+        if (flushChunkData(wp) && wp->finalized) {
             trace(6, "websFlush: write chunk trailer");
             bufPutStr(op, "\r\n0\r\n\r\n");
             bufAddNull(op);
@@ -6000,7 +6687,7 @@ PUBLIC int websFlush(Webs *wp, bool block)
     }
     assert(websValid(wp));
 
-    if (bufLen(op) == 0 && wp->flags & WEBS_FINALIZED) {
+    if (bufLen(op) == 0 && wp->finalized) {
         wp->state = WEBS_COMPLETE;
     }
     if (block) {
@@ -6059,33 +6746,6 @@ PUBLIC void websSetBackgroundWriter(Webs *wp, WebsWriteProc proc)
 }
 
 
-#if (UNUSED && MOVED) || 1
-/*
-    Accessors
- */
-PUBLIC char *websGetCookie(Webs *wp) { return wp->cookie; }
-PUBLIC char *websGetDir(Webs *wp) { return wp->route && wp->route->dir ? wp->route->dir : websGetDocuments(); }
-PUBLIC int  websGetEof(Webs *wp) { return wp->eof; }
-PUBLIC char *websGetExt(Webs *wp) { return wp->ext; }
-PUBLIC char *websGetFilename(Webs *wp) { return wp->filename; }
-PUBLIC char *websGetHost(Webs *wp) { return wp->host; }
-PUBLIC char *websGetIfaddr(Webs *wp) { return wp->ifaddr; }
-PUBLIC char *websGetIpaddr(Webs *wp) { return wp->ipaddr; }
-PUBLIC char *websGetMethod(Webs *wp) { return wp->method; }
-PUBLIC char *websGetPassword(Webs *wp) { return wp->password; }
-PUBLIC char *websGetPath(Webs *wp) { return wp->path; }
-PUBLIC int   websGetPort(Webs *wp) { return wp->port; }
-PUBLIC char *websGetProtocol(Webs *wp) { return wp->protocol; }
-PUBLIC char *websGetQuery(Webs *wp) { return wp->query; }
-PUBLIC char *websGetServer() { return websHost; } 
-PUBLIC char *websGetServerAddress() { return websIpAddr; } 
-PUBLIC char *websGetServerAddressUrl() { return websIpAddrUrl; } 
-PUBLIC char *websGetServerUrl() { return websHostUrl; }
-PUBLIC char *websGetUrl(Webs *wp) { return wp->url; }
-PUBLIC char *websGetUserAgent(Webs *wp) { return wp->userAgent; }
-PUBLIC char *websGetUsername(Webs *wp) { return wp->username; }
-#endif
-
 /*
     Write a block of data of length to the user's browser. Output is buffered and flushed via websFlush.
     This routine will never return "short". i.e. it will return the requested size to write or -1.
@@ -6107,7 +6767,7 @@ PUBLIC ssize websWriteBlock(Webs *wp, char *buf, ssize size)
     op = (wp->flags & WEBS_CHUNKING) ? &wp->chunkbuf : &wp->output;
     written = len = 0;
 
-    while (size > 0 && wp->state < WEBS_COMPLETE) {  
+    while (size > 0 && wp->state < WEBS_COMPLETE) {
         if (bufRoom(op) < size) {
             /*
                 This will do a blocking I/O write. Will only ever fail for I/O errors.
@@ -6140,7 +6800,7 @@ PUBLIC void websDecodeUrl(char *decoded, char *input, ssize len)
 {
     char    *ip,  *op;
     int     num, i, c;
-    
+
     assert(decoded);
     assert(input);
 
@@ -6198,7 +6858,7 @@ static void logRequest(Webs *wp, int code)
 #else
     localtime_r(&timer, &localt);
 #endif
-    strftime(timeStr, sizeof(timeStr), "%d/%b/%Y:%H:%M:%S", &localt); 
+    strftime(timeStr, sizeof(timeStr), "%d/%b/%Y:%H:%M:%S", &localt);
     timeStr[sizeof(timeStr) - 1] = '\0';
 #if WINDOWS
     dwRet = GetTimeZoneInformation(&tzi);
@@ -6216,7 +6876,7 @@ static void logRequest(Webs *wp, int code)
         dataStr[0] = '-'; dataStr[1] = '\0';
     }
     buf = NULL;
-    buf = sfmt("%s - %s [%s %s] \"%s %s %s\" %d %s\n", 
+    buf = sfmt("%s - %s [%s %s] \"%s %s %s\" %d %s\n",
         wp->ipaddr, wp->username == NULL ? "-" : wp->username,
         timeStr, zoneStr, wp->method, wp->path, wp->protoVersion, code, dataStr);
     len = strlen(buf);
@@ -6227,13 +6887,13 @@ static void logRequest(Webs *wp, int code)
 
 
 /*
-    Request and connection timeout. The timeout triggers if we have not read any data from the users browser in the last 
+    Request and connection timeout. The timeout triggers if we have not read any data from the users browser in the last
     WEBS_TIMEOUT period. If we have heard from the browser, simply re-issue the timeout.
  */
 static void checkTimeout(void *arg, int id)
 {
     Webs        *wp;
-    WebsTime    elapsed, delay;
+    int         elapsed, delay;
 
     wp = (Webs*) arg;
     assert(websValid(wp));
@@ -6242,9 +6902,8 @@ static void checkTimeout(void *arg, int id)
     if (websDebug) {
         websRestartEvent(id, (int) WEBS_TIMEOUT);
         return;
-    } 
+    }
     if (wp->state == WEBS_BEGIN) {
-        // Idle connection websError(wp, HTTP_CODE_REQUEST_TIMEOUT | WEBS_CLOSE, "Request exceeded parse timeout");
         complete(wp, 0);
         websFree(wp);
         return;
@@ -6265,7 +6924,7 @@ static void checkTimeout(void *arg, int id)
     }
     delay = WEBS_TIMEOUT - elapsed;
     assert(delay > 0);
-    websRestartEvent(id, (int) delay);
+    websRestartEvent(id, delay);
 }
 
 
@@ -6361,9 +7020,7 @@ PUBLIC void websSetRequestFilename(Webs *wp, char *filename)
     assert(websValid(wp));
     assert(filename && *filename);
 
-    if (wp->filename) {
-        wfree(wp->filename);
-    }
+    wfree(wp->filename);
     wp->filename = sclone(filename);
     websSetVar(wp, "PATH_TRANSLATED", wp->filename);
 }
@@ -6448,528 +7105,9 @@ PUBLIC void websNoteRequestActivity(Webs *wp)
 /*
     Get the number of seconds since the last mark.
  */
-static WebsTime getTimeSinceMark(Webs *wp)
+static int getTimeSinceMark(Webs *wp)
 {
-    return time(0) - wp->timestamp;
-}
-
-
-/*  
-    These functions are intended to closely mirror the syntax for HTTP-date 
-    from RFC 2616 (HTTP/1.1 spec).  This code was submitted by Pete Berstrom.
-    
-    RFC1123Date = wkday "," SP date1 SP time SP "GMT"
-    RFC850Date  = weekday "," SP date2 SP time SP "GMT"
-    ASCTimeDate = wkday SP date3 SP time SP 4DIGIT
-  
-    Each of these functions tries to parse the value and update the index to 
-    the point it leaves off parsing.
- */
-
-typedef enum { JAN, FEB, MAR, APR, MAY, JUN, JUL, AUG, SEP, OCT, NOV, DEC } MonthEnumeration;
-typedef enum { SUN, MON, TUE, WED, THU, FRI, SAT } WeekdayEnumeration;
-
-/*  
-    Parse an N-digit value
- */
-
-static int parseNDIGIT(char *buf, int digits, int *index) 
-{
-    int tmpIndex, returnValue;
-
-    returnValue = 0;
-    for (tmpIndex = *index; tmpIndex < *index+digits; tmpIndex++) {
-        if (isdigit((uchar) buf[tmpIndex])) {
-            returnValue = returnValue * 10 + (buf[tmpIndex] - '0');
-        }
-    }
-    *index = tmpIndex;
-    return returnValue;
-}
-
-
-/*
-    Return an index into the month array
- */
-
-static int parseMonth(char *buf, int *index) 
-{
-    /*  
-        "jan" | "feb" | "mar" | "apr" | "may" | "jun" | 
-        "jul" | "aug" | "sep" | "oct" | "nov" | "dec"
-     */
-    int tmpIndex, returnValue;
-    returnValue = -1;
-    tmpIndex = *index;
-
-    switch (buf[tmpIndex]) {
-        case 'a':
-            switch (buf[tmpIndex+1]) {
-                case 'p':
-                    returnValue = APR;
-                    break;
-                case 'u':
-                    returnValue = AUG;
-                    break;
-            }
-            break;
-        case 'd':
-            returnValue = DEC;
-            break;
-        case 'f':
-            returnValue = FEB;
-            break;
-        case 'j':
-            switch (buf[tmpIndex+1]) {
-                case 'a':
-                    returnValue = JAN;
-                    break;
-                case 'u':
-                    switch (buf[tmpIndex+2]) {
-                        case 'l':
-                            returnValue = JUL;
-                            break;
-                        case 'n':
-                            returnValue = JUN;
-                            break;
-                    }
-                    break;
-            }
-            break;
-        case 'm':
-            switch (buf[tmpIndex+1]) {
-                case 'a':
-                    switch (buf[tmpIndex+2]) {
-                        case 'r':
-                            returnValue = MAR;
-                            break;
-                        case 'y':
-                            returnValue = MAY;
-                            break;
-                    }
-                    break;
-            }
-            break;
-        case 'n':
-            returnValue = NOV;
-            break;
-        case 'o':
-            returnValue = OCT;
-            break;
-        case 's':
-            returnValue = SEP;
-            break;
-    }
-    if (returnValue >= 0) {
-        *index += 3;
-    }
-    return returnValue;
-}
-
-
-/* 
-    Parse a year value (either 2 or 4 digits)
- */
-static int parseYear(char *buf, int *index) 
-{
-    int tmpIndex, returnValue;
-
-    tmpIndex = *index;
-    returnValue = parseNDIGIT(buf, 4, &tmpIndex);
-
-    if (returnValue >= 0) {
-        *index = tmpIndex;
-    } else {
-        returnValue = parseNDIGIT(buf, 2, &tmpIndex);
-        if (returnValue >= 0) {
-            /*
-                Assume that any year earlier than the start of the epoch for WebsTime (1970) specifies 20xx
-             */
-            if (returnValue < 70) {
-                returnValue += 2000;
-            } else {
-                returnValue += 1900;
-            }
-            *index = tmpIndex;
-        }
-    }
-    return returnValue;
-}
-
-
-/* 
-    The formulas used to build these functions are from "Calendrical Calculations", by Nachum Dershowitz, Edward M.
-    Reingold, Cambridge University Press, 1997.  
- */
-static const int GregorianEpoch = 1;
-
-/*
-    Determine if year is a leap year
- */
-PUBLIC int GregorianLeapYearP(long year) 
-{
-    long    tmp;
-    
-    tmp = year % 400;
-    return (year % 4 == 0) && (tmp != 100) && (tmp != 200) && (tmp != 300);
-}
-
-
-/*
-    Return the fixed date from the gregorian date
- */
-long FixedFromGregorian(long month, long day, long year) 
-{
-    long fixedDate;
-
-    fixedDate = (long)(GregorianEpoch - 1 + 365 * (year - 1) + 
-        floor((year - 1) / 4.0) -
-        floor((double)(year - 1) / 100.0) + 
-        floor((double)(year - 1) / 400.0) + 
-        floor((367.0 * ((double)month) - 362.0) / 12.0));
-
-    if (month <= 2) {
-        fixedDate += 0;
-    } else if (GregorianLeapYearP(year)) {
-        fixedDate += -1;
-    } else {
-        fixedDate += -2;
-    }
-    fixedDate += day;
-    return fixedDate;
-}
-
-
-/*
-    Return the gregorian year from a fixed date
- */
-long GregorianYearFromFixed(long fixedDate) 
-{
-    long result, d0, n400, d1, n100, d2, n4, d3, n1, year;
-
-    d0 =    fixedDate - GregorianEpoch;
-    n400 =  (long)(floor((double)d0 / (double)146097));
-    d1 =    d0 % 146097;
-    n100 =  (long)(floor((double)d1 / (double)36524));
-    d2 =    d1 % 36524;
-    n4 =    (long)(floor((double)d2 / (double)1461));
-    d3 =    d2 % 1461;
-    n1 =    (long)(floor((double)d3 / (double)365));
-    year =  400 * n400 + 100 * n100 + 4 * n4 + n1;
-
-    if ((n100 == 4) || (n1 == 4)) {
-        result = year;
-    } else {
-        result = year + 1;
-    }
-    return result;
-}
-
-
-/* 
-    Returns the Gregorian date from a fixed date (not needed for this use, but included for completeness)
- */
-#if KEEP
-PUBLIC void GregorianFromFixed(long fixedDate, long *month, long *day, long *year) 
-{
-    long priorDays, correction;
-
-    *year =         GregorianYearFromFixed(fixedDate);
-    priorDays =     fixedDate - FixedFromGregorian(1, 1, *year);
-
-    if (fixedDate < FixedFromGregorian(3,1,*year)) {
-        correction = 0;
-    } else if (true == GregorianLeapYearP(*year)) {
-        correction = 1;
-    } else {
-        correction = 2;
-    }
-    *month = (long)(floor((12.0 * (double)(priorDays + correction) + 373.0) / 367.0));
-    *day = fixedDate - FixedFromGregorian(*month, 1, *year);
-}
-#endif
-
-
-/* 
-    Returns the difference between two Gregorian dates
- */
-long GregorianDateDifferenc(long month1, long day1, long year1, long month2, long day2, long year2) 
-{
-    return FixedFromGregorian(month2, day2, year2) - FixedFromGregorian(month1, day1, year1);
-}
-
-
-/*
-    Return the number of seconds into the current day
- */
-static int parseTime(char *buf, int *index) 
-{
-    /*  
-        Format of buf is - 2DIGIT ":" 2DIGIT ":" 2DIGIT
-     */
-    int returnValue, tmpIndex, hourValue, minuteValue, secondValue;
-
-    hourValue = minuteValue = secondValue = -1;
-    returnValue = -1;
-    tmpIndex = *index;
-
-    hourValue = parseNDIGIT(buf, 2, &tmpIndex);
-
-    if (hourValue >= 0) {
-        tmpIndex++;
-        minuteValue = parseNDIGIT(buf, 2, &tmpIndex);
-        if (minuteValue >= 0) {
-            tmpIndex++;
-            secondValue = parseNDIGIT(buf, 2, &tmpIndex);
-        }
-    }
-    if ((hourValue >= 0) && (minuteValue >= 0) && (secondValue >= 0)) {
-        returnValue = (((hourValue * 60) + minuteValue) * 60) + secondValue;
-        *index = tmpIndex;
-    }
-    return returnValue;
-}
-
-
-#define SECONDS_PER_DAY 24*60*60
-
-/*
-    Return the equivalent of time() given a gregorian date
- */
-static WebsTime dateToTimet(int year, int month, int day) 
-{
-    long    dayDifference;
-
-    dayDifference = FixedFromGregorian(month + 1, day, year) - FixedFromGregorian(1, 1, 1970);
-    return dayDifference * SECONDS_PER_DAY;
-}
-
-
-/*
-    Return the number of seconds between Jan 1, 1970 and the parsed date (corresponds to documentation for time() function)
- */
-static WebsTime parseDate1or2(char *buf, int *index) 
-{
-    /*  
-        Format of buf is either
-            2DIGIT SP month SP 4DIGIT
-        or
-            2DIGIT "-" month "-" 2DIGIT
-     */
-    WebsTime    returnValue;
-    int         dayValue, monthValue, yearValue, tmpIndex;
-
-    returnValue = (WebsTime) -1;
-    tmpIndex = *index;
-
-    dayValue = monthValue = yearValue = -1;
-
-    if (buf[tmpIndex] == ',') {
-        /* 
-            Skip over the ", " 
-         */
-        tmpIndex += 2; 
-
-        dayValue = parseNDIGIT(buf, 2, &tmpIndex);
-        if (dayValue >= 0) {
-            /*
-                Skip over the space or hyphen
-             */
-            tmpIndex++; 
-            monthValue = parseMonth(buf, &tmpIndex);
-            if (monthValue >= 0) {
-                /*
-                    Skip over the space or hyphen
-                 */
-                tmpIndex++; 
-                yearValue = parseYear(buf, &tmpIndex);
-            }
-        }
-
-        if ((dayValue >= 0) &&
-            (monthValue >= 0) &&
-            (yearValue >= 0)) {
-            if (yearValue < 1970) {
-                /*              
-                    Allow for Microsoft IE's year 1601 dates 
-                 */
-                returnValue = 0; 
-            } else {
-                returnValue = dateToTimet(yearValue, monthValue, dayValue);
-            }
-            *index = tmpIndex;
-        }
-    }
-    return returnValue;
-}
-
-
-/*
-    Return the number of seconds between Jan 1, 1970 and the parsed date
- */
-static WebsTime parseDate3Time(char *buf, int *index) 
-{
-    /*
-        Format of buf is month SP ( 2DIGIT | ( SP 1DIGIT ))
-        Local time
-     */
-    WebsTime    returnValue;
-    int         dayValue, monthValue, yearValue, timeValue, tmpIndex;
-
-    returnValue = (WebsTime) -1;
-    tmpIndex = *index;
-
-    dayValue = monthValue = yearValue = timeValue = -1;
-
-    monthValue = parseMonth(buf, &tmpIndex);
-    if (monthValue >= 0) {
-        /*      
-            Skip over the space 
-         */
-        tmpIndex++; 
-        if (buf[tmpIndex] == ' ') {
-            /*
-                Skip over this space too 
-             */
-            tmpIndex++; 
-            dayValue = parseNDIGIT(buf, 1, &tmpIndex);
-        } else {
-            dayValue = parseNDIGIT(buf, 2, &tmpIndex);
-        }
-        /*      
-            Now get the time and time SP 4DIGIT
-         */
-        tmpIndex++;
-        timeValue = parseTime(buf, &tmpIndex);
-        if (timeValue >= 0) {
-            /*          
-                Now grab the 4DIGIT year value
-             */
-            tmpIndex++;
-            yearValue = parseYear(buf, &tmpIndex);
-        }
-    }
-    if ((dayValue >= 0) && (monthValue >= 0) && (yearValue >= 0)) {
-        returnValue = dateToTimet(yearValue, monthValue, dayValue);
-        returnValue += timeValue;
-        *index = tmpIndex;
-    }
-    return returnValue;
-}
-
-
-/*
-    This calculates the buffer index by comparing with a testChar
- */
-static int getInc(char *buf, int testIndex, char testChar, int foundIncrement, int notfoundIncrement) 
-{
-    return (buf[testIndex] == testChar) ? foundIncrement : notfoundIncrement;
-}
-
-
-/*
-    Return an index into a logical weekday array
- */
-static int parseWeekday(char *buf, int *index) 
-{
-    /*  
-        Format of buf is either
-            "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
-        or
-            "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"
-     */
-    int tmpIndex, returnValue;
-
-    returnValue = -1;
-    tmpIndex = *index;
-
-    switch (buf[tmpIndex]) {
-        case 'f':
-            returnValue = FRI;
-            *index += getInc(buf, tmpIndex+3, 'd', sizeof("Friday"), 3);
-            break;
-        case 'm':
-            returnValue = MON;
-            *index += getInc(buf, tmpIndex+3, 'd', sizeof("Monday"), 3);
-            break;
-        case 's':
-            switch (buf[tmpIndex+1]) {
-                case 'a':
-                    returnValue = SAT;
-                    *index += getInc(buf, tmpIndex+3, 'u', sizeof("Saturday"), 3);
-                    break;
-                case 'u':
-                    returnValue = SUN;
-                    *index += getInc(buf, tmpIndex+3, 'd', sizeof("Sunday"), 3);
-                    break;
-            }
-            break;
-        case 't':
-            switch (buf[tmpIndex+1]) {
-                case 'h':
-                    returnValue = THU;
-                    *index += getInc(buf, tmpIndex+3, 'r', sizeof("Thursday"), 3);
-                    break;
-                case 'u':
-                    returnValue = TUE;
-                    *index += getInc(buf, tmpIndex+3, 's', sizeof("Tuesday"), 3);
-                    break;
-            }
-            break;
-        case 'w':
-            returnValue = WED;
-            *index += getInc(buf, tmpIndex+3, 'n', sizeof("Wednesday"), 3);
-            break;
-    }
-    return returnValue;
-}
-
-
-/*
-    Parse the date and time string
- */
-static WebsTime dateParse(WebsTime tip, char *cmd)
-{
-    WebsTime    parsedValue, dateValue;
-    int         index, tmpIndex, weekday, timeValue;
-
-    slower(cmd);
-    parsedValue = (WebsTime) 0;
-    index = timeValue = 0;
-    weekday = parseWeekday(cmd, &index);
-
-    if (weekday >= 0) {
-        tmpIndex = index;
-        dateValue = parseDate1or2(cmd, &tmpIndex);
-        if (dateValue >= 0) {
-            index = tmpIndex + 1;
-            /*
-                One of these two forms is being used
-                wkday [","] SP date1 SP time SP "GMT"
-                weekday [","] SP date2 SP time SP "GMT"
-             */
-            timeValue = parseTime(cmd, &index);
-            if (timeValue >= 0) {
-                /*              
-                    Now match up that "GMT" string for completeness
-                    Compute the final value if there were no problems in the parse
-                 */
-                if ((weekday >= 0) &&
-                    (dateValue >= 0) &&
-                    (timeValue >= 0)) {
-                    parsedValue = dateValue + timeValue;
-                }
-            }
-        } else {
-            /* 
-                Try the other form - wkday SP date3 SP time SP 4DIGIT
-                NOTE: local time
-             */
-            tmpIndex = ++index;
-            parsedValue = parseDate3Time(cmd, &tmpIndex);
-        }
-    }
-    return parsedValue;
+    return (int) (time(0) - wp->timestamp);
 }
 
 
@@ -6992,12 +7130,12 @@ PUBLIC bool websValidUriChars(char *uri)
 /*
     Parse the URL. A single buffer is allocated to store the parsed URL in *pbuf. This must be freed by the caller.
  */
-PUBLIC int websUrlParse(char *url, char **pbuf, char **pscheme, char **phost, char **pport, char **ppath, char **pext, 
+PUBLIC int websUrlParse(char *url, char **pbuf, char **pscheme, char **phost, char **pport, char **ppath, char **pext,
         char **preference, char **pquery)
 {
     char    *tok, *delim, *host, *path, *port, *scheme, *reference, *query, *ext, *buf, *buf2;
     ssize   buflen, ulen, len;
-    int     rc, sep;
+    int     sep;
 
     assert(pbuf);
     if (url == 0) {
@@ -7057,10 +7195,10 @@ PUBLIC int websUrlParse(char *url, char **pbuf, char **pscheme, char **phost, ch
         tok = delim;
 
     } else if (*tok && *tok != '/' && *tok != ':' && (scheme || strchr(tok, ':'))) {
-        /* 
+        /*
            Supported forms:
                scheme://hostname
-               hostname[:port][/path] 
+               hostname[:port][/path]
          */
         host = tok;
         if ((tok = strpbrk(tok, ":/")) == 0) {
@@ -7082,9 +7220,9 @@ PUBLIC int websUrlParse(char *url, char **pbuf, char **pscheme, char **phost, ch
 
     /* [/path] */
     if (*tok) {
-        /* 
+        /*
            Terminate hostname. This zeros the leading path slash.
-           This will be repaired before returning if ppath is set 
+           This will be repaired before returning if ppath is set
          */
         sep = *tok;
         *tok++ = '\0';
@@ -7105,7 +7243,6 @@ PUBLIC int websUrlParse(char *url, char **pbuf, char **pscheme, char **phost, ch
     /*
         Pass back the requested fields
      */
-    rc = 0;
     *pbuf = buf;
     if (pscheme) {
         if (scheme == 0) {
@@ -7131,13 +7268,6 @@ PUBLIC int websUrlParse(char *url, char **pbuf, char **pscheme, char **phost, ch
             scopy(&buf2[1], len - 1, path);
             path = buf2;
             *path = sep;
-#if UNUSED && MOVED 
-            if (!websValidUriChars(path)) {
-                rc = -1;
-            } else {
-                websDecodeUrl(path, path, -1);
-            }
-#endif
         }
         *ppath = path;
     }
@@ -7149,18 +7279,19 @@ PUBLIC int websUrlParse(char *url, char **pbuf, char **pscheme, char **phost, ch
     }
     if (pext) {
 #if ME_WIN_LIKE
-        slower(ext);            
+        slower(ext);
 #endif
         *pext = ext;
     }
-    return rc;
+    return 0;
 }
 
 
 /*
-    Normalize a URI path to remove "./",  "../" and redundant separators. 
-    Note: this does not make an abs path and does not map separators nor change case. 
+    Normalize a URI path to remove "./",  "../" and redundant separators.
+    Note: this does not make an abs path and does not map separators nor change case.
     This validates the URI and expects it to begin with "/".
+    Returns an allocated path, caller must free.
  */
 PUBLIC char *websNormalizeUriPath(char *pathArg)
 {
@@ -7177,6 +7308,7 @@ PUBLIC char *websNormalizeUriPath(char *pathArg)
     strcpy(dupPath, pathArg);
 
     if ((segments = walloc(sizeof(char*) * (len + 1))) == 0) {
+        wfree(dupPath);
         return NULL;
     }
     nseg = len = 0;
@@ -7240,7 +7372,7 @@ PUBLIC char *websNormalizeUriPath(char *pathArg)
     Validate a URI path for use in a HTTP request line
     The URI must contain only valid characters and must being with "/" both before and after decoding.
     A decoded, normalized URI path is returned.
-    The uri is modified.
+    The uri is modified. Returns an allocated path. Caller must free.
  */
 PUBLIC char *websValidateUriPath(char *uri)
 {
@@ -7255,6 +7387,7 @@ PUBLIC char *websValidateUriPath(char *uri)
         return 0;
     }
     if (*uri != '/' || strchr(uri, '\\')) {
+        wfree(uri);
         return 0;
     }
     return uri;
@@ -7321,7 +7454,7 @@ PUBLIC void websPageSeek(Webs *wp, Offset offset, int origin)
 }
 
 
-PUBLIC void websSetCookie(Webs *wp, char *name, char *value, char *path, char *cookieDomain, WebsTime lifespan, int flags)
+PUBLIC void websSetCookie(Webs *wp, char *name, char *value, char *path, char *cookieDomain, int lifespan, int flags)
 {
     WebsTime    when;
     char        *cp, *expiresAtt, *expires, *domainAtt, *domain, *secure, *httponly, *cookie, *old;
@@ -7368,12 +7501,12 @@ PUBLIC void websSetCookie(Webs *wp, char *name, char *value, char *path, char *c
         expiresAtt = "";
         expires = "";
     }
-    /* 
+    /*
        Allow multiple cookie headers. Even if the same name. Later definitions take precedence
      */
     secure = (flags & WEBS_COOKIE_SECURE) ? "; secure" : "";
     httponly = (flags & WEBS_COOKIE_HTTP) ?  "; httponly" : "";
-    cookie = sfmt("%s=%s; path=%s%s%s%s%s%s%s", name, value, path, domainAtt, domain, expiresAtt, expires, secure, 
+    cookie = sfmt("%s=%s; path=%s%s%s%s%s%s%s", name, value, path, domainAtt, domain, expiresAtt, expires, secure,
         httponly);
     if (wp->responseCookie) {
         old = wp->responseCookie;
@@ -7387,6 +7520,9 @@ PUBLIC void websSetCookie(Webs *wp, char *name, char *value, char *path, char *c
 }
 
 
+/*
+    Return the next token in the input stream. Does not allocate
+ */
 static char *getToken(Webs *wp, char *delim)
 {
     WebsBuf     *buf;
@@ -7418,25 +7554,25 @@ static char *getToken(Webs *wp, char *delim)
 }
 
 
-PUBLIC int websGetBackground() 
+PUBLIC int websGetBackground()
 {
     return websBackground;
 }
 
 
-PUBLIC void websSetBackground(int on) 
+PUBLIC void websSetBackground(int on)
 {
     websBackground = on;
 }
 
 
-PUBLIC int websGetDebug() 
+PUBLIC int websGetDebug()
 {
     return websDebug;
 }
 
 
-PUBLIC void websSetDebug(int on) 
+PUBLIC void websSetDebug(int on)
 {
     websDebug = on;
 }
@@ -7449,11 +7585,11 @@ static char *makeSessionID(Webs *wp)
 
     assert(wp);
     fmt(idBuf, sizeof(idBuf), "%08x%08x%d", PTOI(wp) + PTOI(wp->url), (int) time(0), nextSession++);
-    return websMD5Block(idBuf, sizeof(idBuf), "::webs.session::");
+    return websMD5Block(idBuf, slen(idBuf), "::webs.session::");
 }
 
 
-WebsSession *websAllocSession(Webs *wp, char *id, WebsTime lifespan)
+WebsSession *websAllocSession(Webs *wp, char *id, int lifespan)
 {
     WebsSession     *sp;
 
@@ -7470,6 +7606,8 @@ WebsSession *websAllocSession(Webs *wp, char *id, WebsTime lifespan)
         sp->id = sclone(id);
     }
     if ((sp->cache = hashCreate(WEBS_SESSION_HASH)) == 0) {
+        wfree(sp->id);
+        wfree(sp);
         return 0;
     }
     return sp;
@@ -7482,6 +7620,7 @@ static void freeSession(WebsSession *sp)
 
     if (sp->cache >= 0) {
         hashFree(sp->cache);
+        sp->cache = -1;
     }
     wfree(sp->id);
     wfree(sp);
@@ -7492,7 +7631,7 @@ WebsSession *websGetSession(Webs *wp, int create)
 {
     WebsKey     *sym;
     char        *id;
-    
+
     assert(wp);
 
     if (!wp->session) {
@@ -7624,28 +7763,48 @@ PUBLIC int websSetSessionVar(Webs *wp, char *key, char *value)
 }
 
 
-static void pruneCache()
+static void pruneSessions()
 {
     WebsSession     *sp;
     WebsTime        when;
     WebsKey         *sym, *next;
     int             oldCount;
 
-    oldCount = sessionCount;
-    when = time(0);
-    for (sym = hashFirst(sessions); sym; sym = next) {
-        next = hashNext(sessions, sym);
-        sp = (WebsSession*) sym->content.value.symbol;
-        if (sp->expires <= when) {
-            hashDelete(sessions, sp->id);
-            sessionCount--;
-            freeSession(sp);
+    if (sessions >= 0) {
+        oldCount = sessionCount;
+        when = time(0);
+        for (sym = hashFirst(sessions); sym; sym = next) {
+            next = hashNext(sessions, sym);
+            sp = (WebsSession*) sym->content.value.symbol;
+            if (sp->expires <= when) {
+                hashDelete(sessions, sp->id);
+                sessionCount--;
+                freeSession(sp);
+            }
+        }
+        if (oldCount != sessionCount || sessionCount) {
+            trace(4, "Prune %d sessions. Remaining: %d", oldCount - sessionCount, sessionCount);
         }
     }
-    if (oldCount != sessionCount || sessionCount) { 
-        trace(4, "Prune %d sessions. Remaining: %d", oldCount - sessionCount, sessionCount);
-    }
     websRestartEvent(pruneId, WEBS_SESSION_PRUNE);
+}
+
+
+static void freeSessions()
+{
+    WebsSession     *sp;
+    WebsKey         *sym, *next;
+
+    if (sessions >= 0) {
+        for (sym = hashFirst(sessions); sym; sym = next) {
+            next = hashNext(sessions, sym);
+            sp = (WebsSession*) sym->content.value.symbol;
+            hashDelete(sessions, sp->id);
+            freeSession(sp);
+        }
+        hashFree(sessions);
+        sessions = -1;
+    }
 }
 
 
@@ -7710,12 +7869,108 @@ static void setFileLimits()
 }
 
 /*
+    Output an error message and cleanup
+ */
+PUBLIC void websError(Webs *wp, int code, char *fmt, ...)
+{
+    va_list     args;
+    char        *msg, *buf;
+    char        *encoded;
+    int         status;
+
+    assert(wp);
+    wp->error++;
+    if (code & WEBS_CLOSE) {
+        wp->flags &= ~WEBS_KEEP_ALIVE;
+        wp->connError++;
+    }
+    status = code & WEBS_CODE_MASK;
+#if !ME_ROM
+    if (wp->putfd >= 0) {
+        close(wp->putfd);
+        wp->putfd = -1;
+    }
+#endif
+    if (wp->rxRemaining && status != 200 && status != 301 && status != 302 && status != 401) {
+        /* Close connection so we don't have to consume remaining content */
+        wp->flags &= ~WEBS_KEEP_ALIVE;
+    }
+    encoded = websEscapeHtml(wp->url);
+    wfree(wp->url);
+    wp->url = encoded;
+    if (fmt) {
+        if (!(code & WEBS_NOLOG)) {
+            va_start(args, fmt);
+            msg = sfmtv(fmt, args);
+            va_end(args);
+            trace(2, "%s", msg);
+            wfree(msg);
+        }
+        buf = sfmt("\
+<html>\r\n\
+    <head><title>Document Error: %s</title></head>\r\n\
+    <body>\r\n\
+        <h2>Access Error: %s</h2>\r\n\
+    </body>\r\n\
+</html>\r\n", websErrorMsg(code), websErrorMsg(code));
+    } else {
+        buf = 0;
+    }
+    websResponse(wp, code, buf);
+    wfree(buf);
+}
+
+
+/*
+    Return the error message for a given code
+ */
+PUBLIC char *websErrorMsg(int code)
+{
+    WebsError   *ep;
+
+    assert(code >= 0);
+    code &= WEBS_CODE_MASK;
+    for (ep = websErrors; ep->code; ep++) {
+        if (code == ep->code) {
+            return ep->msg;
+        }
+    }
+    return websErrorMsg(HTTP_CODE_INTERNAL_SERVER_ERROR);
+}
+
+
+/*
+    Accessors
+ */
+PUBLIC char *websGetCookie(Webs *wp) { return wp->cookie; }
+PUBLIC char *websGetDir(Webs *wp) { return wp->route && wp->route->dir ? wp->route->dir : websGetDocuments(); }
+PUBLIC int  websGetEof(Webs *wp) { return wp->eof; }
+PUBLIC char *websGetExt(Webs *wp) { return wp->ext; }
+PUBLIC char *websGetFilename(Webs *wp) { return wp->filename; }
+PUBLIC char *websGetHost(Webs *wp) { return wp->host; }
+PUBLIC char *websGetIfaddr(Webs *wp) { return wp->ifaddr; }
+PUBLIC char *websGetIpaddr(Webs *wp) { return wp->ipaddr; }
+PUBLIC char *websGetMethod(Webs *wp) { return wp->method; }
+PUBLIC char *websGetPassword(Webs *wp) { return wp->password; }
+PUBLIC char *websGetPath(Webs *wp) { return wp->path; }
+PUBLIC int   websGetPort(Webs *wp) { return wp->port; }
+PUBLIC char *websGetProtocol(Webs *wp) { return wp->protocol; }
+PUBLIC char *websGetQuery(Webs *wp) { return wp->query; }
+PUBLIC char *websGetServer() { return websHost; }
+PUBLIC char *websGetServerAddress() { return websIpAddr; }
+PUBLIC char *websGetServerAddressUrl() { return websIpAddrUrl; }
+PUBLIC char *websGetServerUrl() { return websHostUrl; }
+PUBLIC char *websGetUrl(Webs *wp) { return wp->url; }
+PUBLIC char *websGetUserAgent(Webs *wp) { return wp->userAgent; }
+PUBLIC char *websGetUsername(Webs *wp) { return wp->username; }
+
+/*
     @copy   default
 
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -7736,7 +7991,7 @@ static void setFileLimits()
 
 /*
     js.c -- Mini JavaScript
-  
+
     Copyright (c) All Rights Reserved. See details at the end of the file.
  */
 
@@ -7875,12 +8130,12 @@ PUBLIC char *jsEvalFile(int jid, char *path, char **emsg)
     }
     if (stat(path, &sbuf) < 0) {
         close(fd);
-        jsError(ep, "Cant stat %s", path);
+        jsError(ep, "Cannot stat %s", path);
         return NULL;
     }
     if ((script = walloc(sbuf.st_size + 1)) == NULL) {
         close(fd);
-        jsError(ep, "Cant malloc %d", sbuf.st_size);
+        jsError(ep, "Cannot allocate %d", sbuf.st_size);
         return NULL;
     }
     if (read(fd, script, sbuf.st_size) != (int)sbuf.st_size) {
@@ -7964,13 +8219,13 @@ PUBLIC char *jsEval(int jid, char *script, char **emsg)
     int     state;
     void    *endlessLoopTest;
     int     loopCounter;
-    
-    
+
+
     assert(script);
 
     if (emsg) {
         *emsg = NULL;
-    } 
+    }
     if ((ep = jsPtr(jid)) == NULL) {
         return NULL;
     }
@@ -8268,6 +8523,7 @@ static int parseStmt(Js *ep, int state, int flags)
             setString(&ep->result, "");
             if (jsLexGetToken(ep, state) != TOK_LPAREN) {
                 freeFunc(&func);
+                ep->func = saveFunc;
                 goto error;
             }
             if (parse(ep, STATE_ARG_LIST, flags) != STATE_ARG_LIST_DONE) {
@@ -8382,7 +8638,7 @@ static int parseStmt(Js *ep, int state, int flags)
 
             /*
                 The first time through, we save the current input context just to each step: prior to the conditional,
-                the loop increment and the loop body.  
+                the loop increment and the loop body.
              */
             jsLexSaveInputState(ep, &condScript);
             if (parse(ep, STATE_COND, flags) != STATE_COND_DONE) {
@@ -8578,7 +8834,7 @@ static int parseDeclaration(Js *ep, int state, int flags)
                 var x;
                 var x, y, z;
                 var x = 1 + 2 / 3, y = 2 + 4;
-      
+
         We set the variable to NULL if there is no associated assignment.
      */
     do {
@@ -8724,7 +8980,7 @@ static int parseExpr(Js *ep, int state, int flags)
     do {
         /*
             This loop will handle an entire expression list. We call parse to evalutate each term which returns the
-            result in ep->result.  
+            result in ep->result.
          */
         if (tid == TOK_LOGICAL) {
             if ((state = parse(ep, STATE_RELEXP, flags)) != STATE_RELEXP_DONE) {
@@ -9100,9 +9356,9 @@ PUBLIC void *jsGetGlobalFunction(int jid, char *name)
 /*
     Utility routine to crack Javascript arguments. Return the number of args
     seen. This routine only supports %s and %d type args.
-  
+
     Typical usage:
-  
+
         if (jsArgs(argc, argv, "%s %d", &name, &age) < 2) {
             error("Insufficient args");
             return -1;
@@ -9205,7 +9461,7 @@ PUBLIC char *jsGetResult(int jid)
 
 /*
     Set a variable. Note: a variable with a value of NULL means declared but undefined. The value is defined in the
-    top-most variable frame.  
+    top-most variable frame.
  */
 PUBLIC void jsSetVar(int jid, char *var, char *value)
 {
@@ -9228,7 +9484,7 @@ PUBLIC void jsSetVar(int jid, char *var, char *value)
 
 /*
     Set a local variable. Note: a variable with a value of NULL means declared but undefined. The value is defined in
-    the top-most variable frame.  
+    the top-most variable frame.
  */
 PUBLIC void jsSetLocalVar(int jid, char *var, char *value)
 {
@@ -9251,7 +9507,7 @@ PUBLIC void jsSetLocalVar(int jid, char *var, char *value)
 
 /*
     Set a global variable. Note: a variable with a value of NULL means declared but undefined. The value is defined in
-    the global variable frame.  
+    the global variable frame.
  */
 PUBLIC void jsSetGlobalVar(int jid, char *var, char *value)
 {
@@ -9789,7 +10045,7 @@ static int getLexicalToken(Js *ep, int state)
             }
             return TOK_LITERAL;
 
-        case '0': case '1': case '2': case '3': case '4': 
+        case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':
             do {
                 if (tokenAddChar(ep, c) < 0) {
@@ -9843,9 +10099,9 @@ static int getLexicalToken(Js *ep, int state)
                     return TOK_RETURN;
                 }
             }
-            /* 
+            /*
                 Skip white space after token to find out whether this is a function or not.
-             */ 
+             */
             while (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
                 if ((c = inputGetc(ep)) < 0)
                     break;
@@ -9986,7 +10242,7 @@ static int charConvert(Js *ep, int base, int maxDig)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -10007,7 +10263,7 @@ static int charConvert(Js *ep, int base, int maxDig)
 
 /*
     jst.c -- JavaScript templates
-  
+
     Copyright (c) All Rights Reserved. See details at the end of the file.
  */
 
@@ -10030,6 +10286,7 @@ static char *skipWhite(char *s);
 /*
     Process requests and expand all scripting commands. We read the entire web page into memory and then process. If
     you have really big documents, it is better to make them plain HTML files rather than Javascript web pages.
+    Return true to indicate the request was handled, even for errors.
  */
 static bool jstHandler(Webs *wp)
 {
@@ -10068,7 +10325,7 @@ static bool jstHandler(Webs *wp)
     buf[len] = '\0';
 
     if (websPageReadData(wp, buf, len) != len) {
-        websError(wp, HTTP_CODE_NOT_FOUND, "Cant read %s", wp->filename);
+        websError(wp, HTTP_CODE_NOT_FOUND, "Cannot read %s", wp->filename);
         goto done;
     }
     websPageClose(wp);
@@ -10123,7 +10380,7 @@ static bool jstHandler(Webs *wp)
 
                 if (jsEval(jid, nextp, &result) == 0) {
                     /*
-                         On an error, discard all output accumulated so far and store the error in the result buffer. 
+                         On an error, discard all output accumulated so far and store the error in the result buffer.
                          Be careful if the user has called websError() already.
                      */
                     rc = -1;
@@ -10205,7 +10462,7 @@ PUBLIC int websJstWrite(int jid, Webs *wp, int argc, char **argv)
     int     i;
 
     assert(websValid(wp));
-    
+
     for (i = 0; i < argc; ) {
         assert(argv);
         if (websWriteBlock(wp, argv[i], strlen(argv[i])) < 0) {
@@ -10244,7 +10501,7 @@ static char *strtokcmp(char *s1, char *s2)
 }
 
 
-static char *skipWhite(char *s) 
+static char *skipWhite(char *s)
 {
     assert(s);
 
@@ -10265,7 +10522,7 @@ static char *skipWhite(char *s)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -10296,6 +10553,10 @@ static char *skipWhite(char *s)
 
 /*********************************** Code *************************************/
 
+/*
+    Handle OPTIONS and TRACE methods.
+    Return true to indicate the request was handled, even for errors.
+ */
 static bool optionsHandler(Webs *wp)
 {
     assert(wp);
@@ -10336,7 +10597,7 @@ PUBLIC int websOptionsOpen()
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -10428,7 +10689,7 @@ PUBLIC char *websTempFile(char *dir, char *prefix)
 /*
     Get absolute path.  In VxWorks, functions like chdir, ioctl for mkdir and ioctl for rmdir, require an absolute path.
     This function will take the path argument and convert it to an absolute path.  It is the caller's responsibility to
-    deallocate the returned string. 
+    deallocate the returned string.
  */
 static char *getAbsolutePath(char *path)
 {
@@ -10447,7 +10708,11 @@ static char *getAbsolutePath(char *path)
         return sclone(path);
     }
     dev = walloc(ME_GOAHEAD_LIMIT_FILENAME);
+#if ME_ROM
+    dev[0] = '\0';
+#else
     getcwd(dev, ME_GOAHEAD_LIMIT_FILENAME);
+#endif
     strcat(dev, "/");
     strcat(dev, path);
     return dev;
@@ -10528,14 +10793,14 @@ PUBLIC void syslog(int priority, char *fmt, ...)
         if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, logName, 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hkey, &exists) ==
                 ERROR_SUCCESS) {
             value = "%SystemRoot%\\System32\\netmsg.dll";
-            if (RegSetValueEx(hkey, "EventMessageFile", 0, REG_EXPAND_SZ, 
+            if (RegSetValueEx(hkey, "EventMessageFile", 0, REG_EXPAND_SZ,
                     (uchar*) value, (int) slen(value) + 1) != ERROR_SUCCESS) {
                 RegCloseKey(hkey);
                 wfree(buf);
                 return;
             }
             errorType = EVENTLOG_ERROR_TYPE | EVENTLOG_WARNING_TYPE | EVENTLOG_INFORMATION_TYPE;
-            if (RegSetValueEx(hkey, "TypesSupported", 0, REG_DWORD, (uchar*) &errorType, sizeof(DWORD)) != 
+            if (RegSetValueEx(hkey, "TypesSupported", 0, REG_DWORD, (uchar*) &errorType, sizeof(DWORD)) !=
                     ERROR_SUCCESS) {
                 RegCloseKey(hkey);
                 wfree(buf);
@@ -10586,11 +10851,11 @@ PUBLIC char *basename(char *name)
 
 
 #if TIDSP
-char *inet_ntoa(struct in_addr addr) 
+char *inet_ntoa(struct in_addr addr)
 {
-    char    result[16];
-    uchar   *bytes;
-   
+    static char result[16];
+    uchar       *bytes;
+
     bytes = (uchar*) &addr;
     sprintf(result, "%d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3]);
     return result;
@@ -10642,7 +10907,7 @@ int select(int maxfds, fd_set *readFds, fd_set *writeFds, fd_set *exceptFds, str
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -10658,11 +10923,11 @@ int select(int maxfds, fd_set *readFds, fd_set *writeFds, fd_set *exceptFds, str
 
 
 
-/********* Start of file ../../../src/rom-documents.c ************/
+/********* Start of file ../../../src/rom.c ************/
 
 
 /*
-   rom-documents.c 
+   rom.c
    Compiled by webcomp: Mon Jan 14 14:13:54 2013
  */
 
@@ -10881,7 +11146,7 @@ static bool can(Webs *wp, char *ability)
 }
 
 
-PUBLIC bool websCan(Webs *wp, WebsHash abilities) 
+PUBLIC bool websCan(Webs *wp, WebsHash abilities)
 {
     WebsKey     *key;
     char        *ability, *cp, *start, abuf[ME_GOAHEAD_LIMIT_STRING];
@@ -10911,7 +11176,7 @@ PUBLIC bool websCan(Webs *wp, WebsHash abilities)
             if ((cp = strchr(ability, '|')) != 0) {
                 /*
                     Examine a set of alternative abilities. Need only one to match
-                 */ 
+                 */
                 start = ability;
                 do {
                     sncopy(abuf, sizeof(abuf), start, cp - start);
@@ -10936,7 +11201,7 @@ PUBLIC bool websCan(Webs *wp, WebsHash abilities)
 
 
 #if KEEP
-PUBLIC bool websCanString(Webs *wp, char *abilities) 
+PUBLIC bool websCanString(Webs *wp, char *abilities)
 {
     WebsUser    *user;
     char        *ability, *tok;
@@ -10987,6 +11252,8 @@ WebsRoute *websAddRoute(char *uri, char *handler, int pos)
     }
     if ((key = hashLookup(handlers, handler)) == 0) {
         error("Cannot find route handler %s", handler);
+        wfree(route->prefix);
+        wfree(route);
         return 0;
     }
     route->handler = key->content.value.symbol;
@@ -10997,7 +11264,7 @@ WebsRoute *websAddRoute(char *uri, char *handler, int pos)
     growRoutes();
     if (pos < 0) {
         pos = routeCount;
-    } 
+    }
     if (pos < routeCount) {
         memmove(&routes[pos + 1], &routes[pos], sizeof(WebsRoute*) * routeCount - pos);
     }
@@ -11007,7 +11274,7 @@ WebsRoute *websAddRoute(char *uri, char *handler, int pos)
 }
 
 
-PUBLIC int websSetRouteMatch(WebsRoute *route, char *dir, char *protocol, WebsHash methods, WebsHash extensions, 
+PUBLIC int websSetRouteMatch(WebsRoute *route, char *dir, char *protocol, WebsHash methods, WebsHash extensions,
         WebsHash abilities, WebsHash redirects)
 {
     assert(route);
@@ -11035,7 +11302,7 @@ static void growRoutes()
 }
 
 
-static int lookupRoute(char *uri) 
+static int lookupRoute(char *uri)
 {
     WebsRoute   *route;
     int         i;
@@ -11076,7 +11343,7 @@ static void freeRoute(WebsRoute *route)
 }
 
 
-PUBLIC int websRemoveRoute(char *uri) 
+PUBLIC int websRemoveRoute(char *uri)
 {
     int         i;
 
@@ -11094,7 +11361,7 @@ PUBLIC int websRemoveRoute(char *uri)
 }
 
 
-PUBLIC int websOpenRoute(char *path) 
+PUBLIC int websOpenRoute()
 {
     if ((handlers = hashCreate(-1)) < 0) {
         return -1;
@@ -11105,10 +11372,11 @@ PUBLIC int websOpenRoute(char *path)
 }
 
 
-PUBLIC void websCloseRoute() 
+PUBLIC void websCloseRoute()
 {
     WebsHandler *handler;
     WebsKey     *key;
+    int         i;
 
     if (handlers >= 0) {
         for (key = hashFirst(handlers); key; key = hashNext(handlers, key)) {
@@ -11117,11 +11385,15 @@ PUBLIC void websCloseRoute()
                 (*handler->close)();
             }
             wfree(handler->name);
+            wfree(handler);
         }
         hashFree(handlers);
         handlers = -1;
     }
     if (routes) {
+        for (i = 0; i < routeCount; i++) {
+            freeRoute(routes[i]);
+        }
         wfree(routes);
         routes = 0;
     }
@@ -11181,7 +11453,7 @@ PUBLIC int websLoad(char *path)
     char        *buf, *line, *kind, *next, *auth, *dir, *handler, *protocol, *uri, *option, *key, *value, *status;
     char        *redirectUri, *token;
     int         rc;
-    
+
     assert(path && *path);
 
     rc = 0;
@@ -11281,7 +11553,7 @@ PUBLIC int websLoad(char *path)
             }
 #endif
         } else {
-            error("Unknown route keyword %s", kind); 
+            error("Unknown route keyword %s", kind);
             rc = -1;
             break;
         }
@@ -11295,7 +11567,7 @@ PUBLIC int websLoad(char *path)
 
 
 /*
-    Handler to just continue matching other routes 
+    Handler to just continue matching other routes
  */
 static bool continueHandler(Webs *wp)
 {
@@ -11355,7 +11627,7 @@ PUBLIC int websPublish(char *prefix, char *dir)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -11435,7 +11707,7 @@ PUBLIC char stateMap[] = {
 
 /*
     Format:         %[modifier][width][precision][bits][type]
-  
+
     The Class map will map from a specifier letter to a state.
  */
 PUBLIC char classMap[] = {
@@ -11514,7 +11786,7 @@ typedef struct Format {
         } else { \
             *(fmt)->end = '\0'; \
         } \
-    } else 
+    } else
 
 /*
     The handle list stores the length of the list and the number of used handles in the first two words.  These are
@@ -11549,10 +11821,13 @@ static int       callbackMax;
 
 static HashTable **sym;             /* List of symbol tables */
 static int       symMax;            /* One past the max symbol table */
-static char      *logPath;          /* Log file name */
-static int       logFd;             /* Log file handle */
 
 char *embedthisGoAheadCopyright = EMBEDTHIS_GOAHEAD_COPYRIGHT;
+
+#if ME_GOAHEAD_LOGGING
+static char      *logPath;          /* Log file name */
+static int       logFd;             /* Log file handle */
+#endif
 
 /********************************** Forwards **********************************/
 
@@ -11560,8 +11835,11 @@ static int calcPrime(int size);
 static int getBinBlockSize(int size);
 static int hashIndex(HashTable *tp, char *name);
 static WebsKey *hash(HashTable *tp, char *name);
+
+#if ME_GOAHEAD_LOGGING
 static void defaultLogHandler(int level, char *buf);
 static WebsLogHandler logHandler = defaultLogHandler;
+#endif
 
 static int  getState(char c, int state);
 static int  growBuf(Format *fmt);
@@ -11578,6 +11856,7 @@ PUBLIC int websRuntimeOpen()
 {
     symMax = 0;
     sym = 0;
+    srand((uint) time(NULL));
     return 0;
 }
 
@@ -11649,22 +11928,24 @@ PUBLIC void websStopEvent(int id)
 }
 
 
-WebsTime websRunEvents()
+int websRunEvents()
 {
     Callback    *s;
-    WebsTime    delay, now, nextEvent;
-    int         i;
+    WebsTime    now;
+    int         i, delay, nextEvent;
 
     nextEvent = (MAXINT / 1000);
     now = time(0);
 
     for (i = 0; i < callbackMax; i++) {
         if ((s = callbacks[i]) != NULL) {
-            if ((delay = s->at - now) <= 0) {
+            if (s->at <= now) {
                 callEvent(i);
                 delay = MAXINT / 1000;
                 /* Rescan incase event scheduled or modified an event */
                 i = -1;
+            } else {
+                delay = (int) min(s->at - now, MAXINT);
             }
             nextEvent = min(delay, nextEvent);
         }
@@ -11674,7 +11955,7 @@ WebsTime websRunEvents()
 
 
 /*
-    Allocating secure replacement for sprintf and vsprintf. 
+    Allocating secure replacement for sprintf and vsprintf.
  */
 PUBLIC char *sfmt(char *format, ...)
 {
@@ -11881,11 +12162,13 @@ static char *sprintfCore(char *buf, ssize maxsize, char *spec, va_list args)
                     //  UNICODE - not right wchar
                     safe = websEscapeHtml(va_arg(args, wchar*));
                     outWideString(&fmt, safe, -1);
+                    wfree(safe);
                 } else
 #endif
                 {
                     safe = websEscapeHtml(va_arg(args, char*));
                     outString(&fmt, safe, -1);
+                    wfree(safe);
                 }
                 break;
 
@@ -12226,8 +12509,8 @@ static void outFloat(Format *fmt, char specChar, double value)
 
 
 /*
-    Grow the buffer to fit new data. Return 1 if the buffer can grow. 
-    Grow using the growBy size specified when creating the buffer. 
+    Grow the buffer to fit new data. Return 1 if the buffer can grow.
+    Grow using the growBy size specified when creating the buffer.
  */
 static int growBuf(Format *fmt)
 {
@@ -12320,6 +12603,7 @@ PUBLIC void valueFree(WebsValue* v)
 }
 
 
+#if ME_GOAHEAD_LOGGING
 static void defaultLogHandler(int flags, char *buf)
 {
     char    prefix[ME_GOAHEAD_LIMIT_STRING];
@@ -12366,7 +12650,7 @@ PUBLIC void assertError(WEBS_ARGS_DEC, char *fmt, ...)
     va_start(args, fmt);
     fmtBuf = sfmtv(fmt, args);
 
-    message = sfmt("Assertion %s, failed at %s %d\n", fmtBuf, WEBS_ARGS); 
+    message = sfmt("Assertion %s, failed at %s %d\n", fmtBuf, WEBS_ARGS);
     va_end(args);
     wfree(fmtBuf);
     if (logHandler) {
@@ -12406,7 +12690,7 @@ PUBLIC void traceProc(int level, char *fmt, ...)
 }
 
 
-PUBLIC int websGetLogLevel() 
+PUBLIC int websGetLogLevel()
 {
     return logLevel;
 }
@@ -12458,17 +12742,19 @@ PUBLIC int logOpen()
 
 PUBLIC void logClose()
 {
-    if (logFd >= 0) {
-        close(logFd);                                                                              
-        logFd = -1;                                                                                
-    }                                                                                                    
+#if !ME_ROM
+    if (logFd > 2) {
+        close(logFd);
+        logFd = -1;
+    }
+#endif
 }
 
 
 PUBLIC void logSetPath(char *path)
 {
     char  *lp;
-    
+
     wfree(logPath);
     logPath = sclone(path);
     if ((lp = strchr(logPath, ':')) != 0) {
@@ -12476,6 +12762,7 @@ PUBLIC void logSetPath(char *path)
         logLevel = atoi(lp);
     }
 }
+#endif
 
 
 /*
@@ -12500,7 +12787,7 @@ PUBLIC char *slower(char *string)
 }
 
 
-/* 
+/*
     Convert a string to upper case
  */
 PUBLIC char *supper(char *string)
@@ -12690,7 +12977,7 @@ PUBLIC int wallocObject(void *listArg, int *max, int size)
     return id;
 }
 
-    
+
 /*
     Create a new buf. "increment" is the amount to increase the size of the buf should it need to grow to accomodate
     data being added. "maxsize" is an upper limit (sanity level) beyond which the buffer must not grow. Set maxsize to -1 to
@@ -12701,7 +12988,7 @@ PUBLIC int bufCreate(WebsBuf *bp, int initSize, int maxsize)
     int increment;
 
     assert(bp);
-    
+
     if (initSize <= 0) {
         initSize = ME_GOAHEAD_LIMIT_BUFFER;
     }
@@ -12744,7 +13031,7 @@ PUBLIC void bufFree(WebsBuf *bp)
 
 /*
     Return the length of the data in the buf. Users must fill the queue to a high water mark of at most one less than
-    the queue size.  
+    the queue size.
  */
 PUBLIC ssize bufLen(WebsBuf *bp)
 {
@@ -12795,7 +13082,7 @@ PUBLIC int bufGetc(WebsBuf *bp)
 
 /*
     Add a char to the queue. Note if being used to store wide strings this does not add a trailing '\0'. Grow the buffer as
-    required.  
+    required.
  */
 PUBLIC int bufPutc(WebsBuf *bp, char c)
 {
@@ -12919,7 +13206,7 @@ PUBLIC int bufGetcA(WebsBuf *bp)
 
 
 /*
-    Add a byte to the queue. Note if being used to store strings this does not add a trailing '\0'. 
+    Add a byte to the queue. Note if being used to store strings this does not add a trailing '\0'.
     Grow the buffer as required.
  */
 PUBLIC int bufPutcA(WebsBuf *bp, char c)
@@ -13050,7 +13337,7 @@ PUBLIC ssize bufGetBlk(WebsBuf *bp, char *buf, ssize size)
 
 /*
     Return the maximum number of bytes the buffer can accept via a single block copy. Useful if the user is doing their
-    own data insertion. 
+    own data insertion.
  */
 PUBLIC ssize bufRoom(WebsBuf *bp)
 {
@@ -13058,7 +13345,7 @@ PUBLIC ssize bufRoom(WebsBuf *bp)
 
     assert(bp);
     assert(bp->buflen == (bp->endbuf - bp->buf));
-    
+
     space = bp->buflen - RINGQ_LEN(bp) - 1;
     in_a_line = bp->endbuf - bp->endp;
 
@@ -13068,7 +13355,7 @@ PUBLIC ssize bufRoom(WebsBuf *bp)
 
 /*
     Return the maximum number of bytes the buffer can provide via a single block copy. Useful if the user is doing their
-    own data retrieval.  
+    own data retrieval.
  */
 PUBLIC ssize bufGetBlkMax(WebsBuf *bp)
 {
@@ -13151,7 +13438,7 @@ PUBLIC void bufFlush(WebsBuf *bp)
 PUBLIC void bufCompact(WebsBuf *bp)
 {
     ssize   len;
-    
+
     if (bp->buf) {
         if ((len = bufLen(bp)) > 0) {
             if (bp->servp < bp->endp && bp->servp > bp->buf) {
@@ -13212,11 +13499,10 @@ PUBLIC bool bufGrow(WebsBuf *bp, ssize room)
     wfree((char*) bp->buf);
 
     bp->buflen += room;
-    bp->endp = newbuf;
-    bp->servp = newbuf;
     bp->buf = newbuf;
     bp->endbuf = &bp->buf[bp->buflen];
-    bufPutBlk(bp, newbuf, len);
+    bp->servp = newbuf;
+    bp->endp = &newbuf[len];
     return 1;
 }
 
@@ -13240,7 +13526,7 @@ static int  getBinBlockSize(int size)
 WebsHash hashCreate(int size)
 {
     WebsHash    sd;
-    HashTable      *tp;
+    HashTable   *tp;
 
     if (size < 0) {
         size = WEBS_SMALL_HASH;
@@ -13272,7 +13558,11 @@ WebsHash hashCreate(int size)
         Now create the hash table for fast indexing.
      */
     tp->size = calcPrime(size);
-    tp->hash_table = (WebsKey**) walloc(tp->size * sizeof(WebsKey*));
+    if ((tp->hash_table = (WebsKey**) walloc(tp->size * sizeof(WebsKey*))) == 0) {
+        wfreeHandle(&sym, sd);
+        wfree(tp);
+        return -1;
+    }
     assert(tp->hash_table);
     memset(tp->hash_table, 0, tp->size * sizeof(WebsKey*));
     return sd;
@@ -13281,11 +13571,11 @@ WebsHash hashCreate(int size)
 
 /*
     Close this symbol table. Call a cleanup function to allow the caller to free resources associated with each symbol
-    table entry.  
+    table entry.
  */
 PUBLIC void hashFree(WebsHash sd)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp, *forw;
     int         i;
 
@@ -13320,7 +13610,7 @@ PUBLIC void hashFree(WebsHash sd)
  */
 WebsKey *hashFirst(WebsHash sd)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp;
     int         i;
 
@@ -13345,7 +13635,7 @@ WebsKey *hashFirst(WebsHash sd)
  */
 WebsKey *hashNext(WebsHash sd, WebsKey *last)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp;
     int         i;
 
@@ -13375,7 +13665,7 @@ WebsKey *hashNext(WebsHash sd, WebsKey *last)
  */
 WebsKey *hashLookup(WebsHash sd, char *name)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp;
     char        *cp;
 
@@ -13399,6 +13689,17 @@ WebsKey *hashLookup(WebsHash sd, char *name)
 }
 
 
+void *hashLookupSymbol(WebsHash sd, char *name)
+{
+    WebsKey     *kp;
+
+    if ((kp = hashLookup(sd, name)) == 0) {
+        return 0;
+    }
+    return kp->content.value.symbol;
+}
+
+
 /*
     Enter a symbol into the table. If already there, update its value.  Always succeeds if memory available. We allocate
     a copy of "name" here so it can be a volatile variable. The value "v" is just a copy of the passed in value, so it
@@ -13406,7 +13707,7 @@ WebsKey *hashLookup(WebsHash sd, char *name)
  */
 WebsKey *hashEnter(WebsHash sd, char *name, WebsValue v, int arg)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp, *last;
     char        *cp;
     int         hindex;
@@ -13418,7 +13719,7 @@ WebsKey *hashEnter(WebsHash sd, char *name, WebsValue v, int arg)
 
     /*
         Calculate the first daisy-chain from the hash table. If non-zero, then we have daisy-chain, so scan it and look
-        for the symbol.  
+        for the symbol.
      */
     last = NULL;
     hindex = hashIndex(tp, name);
@@ -13447,8 +13748,7 @@ WebsKey *hashEnter(WebsHash sd, char *name, WebsValue v, int arg)
         /*
             Not found so allocate and append to the daisy-chain
          */
-        sp = (WebsKey*) walloc(sizeof(WebsKey));
-        if (sp == NULL) {
+        if ((sp = (WebsKey*) walloc(sizeof(WebsKey))) == 0) {
             return NULL;
         }
         sp->name = valueString(name, VALUE_ALLOCATE);
@@ -13462,8 +13762,7 @@ WebsKey *hashEnter(WebsHash sd, char *name, WebsValue v, int arg)
         /*
             Daisy chain is empty so we need to start the chain
          */
-        sp = (WebsKey*) walloc(sizeof(WebsKey));
-        if (sp == NULL) {
+        if ((sp = (WebsKey*) walloc(sizeof(WebsKey))) == 0) {
             return NULL;
         }
         tp->hash_table[hindex] = sp;
@@ -13484,7 +13783,7 @@ WebsKey *hashEnter(WebsHash sd, char *name, WebsValue v, int arg)
  */
 PUBLIC int hashDelete(WebsHash sd, char *name)
 {
-    HashTable      *tp;
+    HashTable   *tp;
     WebsKey     *sp, *last;
     char        *cp;
     int         hindex;
@@ -13496,7 +13795,7 @@ PUBLIC int hashDelete(WebsHash sd, char *name)
 
     /*
         Calculate the first daisy-chain from the hash table. If non-zero, then we have daisy-chain, so scan it and look
-        for the symbol.  
+        for the symbol.
      */
     last = NULL;
     hindex = hashIndex(tp, name);
@@ -13529,7 +13828,7 @@ PUBLIC int hashDelete(WebsHash sd, char *name)
 
 /*
     Hash a symbol and return a pointer to the hash daisy-chain list. All symbols reside on the chain (ie. none stored in
-    the hash table itself) 
+    the hash table itself)
  */
 static WebsKey *hash(HashTable *tp, char *name)
 {
@@ -13600,11 +13899,12 @@ static int calcPrime(int size)
 }
 
 
+#if DEPRECATE || 1
 /*
-    Convert a wide unicode string into a multibyte string buffer. If count is supplied, it is used as the source length 
-    in characters. Otherwise set to -1. DestCount is the max size of the dest buffer in bytes. At most destCount - 1 
-    characters will be stored. The dest buffer will always have a trailing null appended.  If dest is NULL, don't copy 
-    the string, just return the length of characters. Return a count of bytes copied to the destination or -1 if an 
+    Convert a wide unicode string into a multibyte string buffer. If count is supplied, it is used as the source length
+    in characters. Otherwise set to -1. DestCount is the max size of the dest buffer in bytes. At most destCount - 1
+    characters will be stored. The dest buffer will always have a trailing null appended.  If dest is NULL, don't copy
+    the string, just return the length of characters. Return a count of bytes copied to the destination or -1 if an
     invalid unicode sequence was provided in src.
     NOTE: does not allocate.
  */
@@ -13643,13 +13943,13 @@ PUBLIC ssize wtom(char *dest, ssize destCount, wchar *src, ssize count)
 
 /*
     Convert a multibyte string to a unicode string. If count is supplied, it is used as the source length in bytes.
-    Otherwise set to -1. DestCount is the max size of the dest buffer in characters. At most destCount - 1 
-    characters will be stored. The dest buffer will always have a trailing null characters appended.  If dest is NULL, 
-    don't copy the string, just return the length of characters. Return a count of characters copied to the destination 
+    Otherwise set to -1. DestCount is the max size of the dest buffer in characters. At most destCount - 1
+    characters will be stored. The dest buffer will always have a trailing null characters appended.  If dest is NULL,
+    don't copy the string, just return the length of characters. Return a count of characters copied to the destination
     or -1 if an invalid multibyte sequence was provided in src.
     NOTE: does not allocate.
  */
-PUBLIC ssize mtow(wchar *dest, ssize destCount, char *src, ssize count) 
+PUBLIC ssize mtow(wchar *dest, ssize destCount, char *src, ssize count)
 {
     ssize      len;
 
@@ -13701,8 +14001,6 @@ wchar *amtow(char *src, ssize *lenp)
 }
 
 
-//  FUTURE UNICODE - need a version that can supply a length
-
 PUBLIC char *awtom(wchar *src, ssize *lenp)
 {
     char    *dest;
@@ -13720,6 +14018,7 @@ PUBLIC char *awtom(wchar *src, ssize *lenp)
     }
     return dest;
 }
+#endif
 
 
 /*
@@ -13761,9 +14060,22 @@ PUBLIC char *sclone(char *s)
     if (s == NULL) {
         s = "";
     }
-    buf = walloc(strlen(s) + 1);
-    strcpy(buf, s);
+    if ((buf = walloc(strlen(s) + 1)) != 0) {
+        strcpy(buf, s);
+    }
     return buf;
+}
+
+
+PUBLIC bool snumber(cchar *s)
+{
+    if (!s) {
+        return 0;
+    }
+    if (*s == '-' || *s == '+') {
+        s++;
+    }
+    return s && *s && strspn(s, "1234567890") == strlen(s);
 }
 
 
@@ -13840,7 +14152,7 @@ PUBLIC ssize scopy(char *dest, ssize destMax, char *src)
 
 
 /*
-    This routine copies at most "count" characters from a string. It ensures the result is always null terminated and 
+    This routine copies at most "count" characters from a string. It ensures the result is always null terminated and
     the buffer does not overflow. Returns -1 if the buffer is too small.
  */
 PUBLIC ssize sncopy(char *dest, ssize destMax, char *src, ssize count)
@@ -13865,7 +14177,7 @@ PUBLIC ssize sncopy(char *dest, ssize destMax, char *src, ssize count)
     } else {
         *dest = '\0';
         len = 0;
-    } 
+    }
     return len;
 }
 
@@ -14059,7 +14371,7 @@ PUBLIC int websParseArgs(char *args, char **argv, int maxArgc)
         start = dest = src;
         if (*src == '"' || *src == '\'') {
             quote = *src;
-            src++; 
+            src++;
             dest++;
         } else {
             quote = 0;
@@ -14068,7 +14380,7 @@ PUBLIC int websParseArgs(char *args, char **argv, int maxArgc)
             argv[argc] = src;
         }
         while (*src) {
-            if (*src == '\\' && src[1] && (src[1] == '\\' || src[1] == '"' || src[1] == '\'')) { 
+            if (*src == '\\' && src[1] && (src[1] == '\\' || src[1] == '"' || src[1] == '\'')) {
                 src++;
             } else {
                 if (quote) {
@@ -14120,7 +14432,7 @@ PUBLIC int fmtAlloc(char **sp, int n, char *format, ...)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
@@ -14189,7 +14501,7 @@ PUBLIC int socketOpen()
     socketList = NULL;
     socketMax = 0;
     socketHighestFd = -1;
-    if ((fd = socket(AF_INET6, SOCK_STREAM, 0)) != -1) { 
+    if ((fd = socket(AF_INET6, SOCK_STREAM, 0)) != -1) {
         hasIPv6 = 1;
         closesocket(fd);
     } else {
@@ -14214,7 +14526,7 @@ PUBLIC void socketClose()
 }
 
 
-PUBLIC bool socketHasDualNetworkStack() 
+PUBLIC bool socketHasDualNetworkStack()
 {
     bool dual;
 
@@ -14227,7 +14539,7 @@ PUBLIC bool socketHasDualNetworkStack()
 }
 
 
-PUBLIC bool socketHasIPv6() 
+PUBLIC bool socketHasIPv6()
 {
     return hasIPv6;
 }
@@ -14276,7 +14588,7 @@ PUBLIC int socketListen(char *ip, int port, SocketAccept accept, int flags)
     if (setsockopt(sp->sock, SOL_SOCKET, SO_REUSEADDR, (char*) &enable, sizeof(enable)) != 0) {
         error("Cannot set reuseaddr, errno %d", errno);
     }
-#if defined(SO_REUSEPORT) && KEEP && UNUSED
+#if defined(SO_REUSEPORT) && KEEP
     /*
         This permits multiple servers listening on the same endpoint
      */
@@ -14342,7 +14654,7 @@ PUBLIC int socketConnect(char *ip, int port, int flags)
     assert(sp);
 
     if (socketInfo(ip, port, &family, &protocol, &addr, &addrlen) < 0) {
-        return -1;       
+        return -1;
     }
     if ((sp->sock = socket(AF_INET, SOCK_STREAM, 0)) == SOCKET_ERROR) {
         socketFree(sid);
@@ -14372,7 +14684,7 @@ PUBLIC int socketConnect(char *ip, int port, int flags)
         socketSetBlock(sid, 1);
 #endif
     }
-    if ((rc = connect(sp->sock, (struct sockaddr*) &addr, sizeof(addr))) < 0 && 
+    if ((rc = connect(sp->sock, (struct sockaddr*) &addr, sizeof(addr))) < 0 &&
         (rc = tryAlternateConnect(sp->sock, (struct sockaddr*) &addr)) < 0) {
 #if ME_WIN_LIKE
         if (socketGetError() != EWOULDBLOCK) {
@@ -14536,7 +14848,7 @@ PUBLIC void socketHiddenData(WebsSocket *sp, ssize len, int dir)
     Wait for a handle to become readable or writable and return a number of noticed events. Timeout is in milliseconds.
  */
 #if ME_WIN_LIKE
-PUBLIC int socketSelect(int sid, WebsTime timeout)
+PUBLIC int socketSelect(int sid, int timeout)
 {
     struct timeval  tv;
     WebsSocket      *sp;
@@ -14570,11 +14882,11 @@ PUBLIC int socketSelect(int sid, WebsTime timeout)
         /*
             Set the appropriate bit in the ready masks for the sp->sock.
          */
-        if (sp->handlerMask & SOCKET_READABLE /* UNUSED || sp->flags & SOCKET_BUFFERED_READ */) {
+        if (sp->handlerMask & SOCKET_READABLE) {
             FD_SET(sp->sock, &readFds);
             nEvents++;
         }
-        if (sp->handlerMask & SOCKET_WRITABLE /* UNUSED || sp->flags & SOCKET_BUFFERED_READ */) {
+        if (sp->handlerMask & SOCKET_WRITABLE) {
             FD_SET(sp->sock, &writeFds);
             nEvents++;
         }
@@ -14591,8 +14903,8 @@ PUBLIC int socketSelect(int sid, WebsTime timeout)
         }
     }
     /*
-        Windows select() fails if no descriptors are set, instead of just sleeping like other, nice select() calls. 
-        So, if WINDOWS, sleep.  
+        Windows select() fails if no descriptors are set, instead of just sleeping like other, nice select() calls.
+        So, if WINDOWS, sleep.
      */
     if (nEvents == 0) {
         Sleep((DWORD) timeout);
@@ -14639,7 +14951,7 @@ PUBLIC int socketSelect(int sid, WebsTime timeout)
 #else /* !ME_WIN_LIKE */
 
 
-PUBLIC int socketSelect(int sid, WebsTime timeout)
+PUBLIC int socketSelect(int sid, int timeout)
 {
     WebsSocket      *sp;
     struct timeval  tv;
@@ -14778,11 +15090,11 @@ static void socketDoEvent(WebsSocket *sp)
 
     sid = sp->sid;
     if (sp->currentEvents & SOCKET_READABLE) {
-        if (sp->flags & SOCKET_LISTENING) { 
+        if (sp->flags & SOCKET_LISTENING) {
             socketAccept(sp);
             sp->currentEvents = 0;
             return;
-        } 
+        }
     }
     /*
         Now invoke the users socket handler. NOTE: the handler may delete the
@@ -14792,7 +15104,7 @@ static void socketDoEvent(WebsSocket *sp)
         (sp->handler)(sid, sp->handlerMask & sp->currentEvents, sp->handler_data);
         /*
             Make sure socket pointer is still valid, then reset the currentEvents.
-         */ 
+         */
         if (socketList && sid < socketMax && socketList[sid] == sp) {
             sp->currentEvents = 0;
         }
@@ -14863,7 +15175,7 @@ PUBLIC int socketSetBlock(int sid, int on)
 }
 
 
-/*  
+/*
     Set the TCP delay behavior (nagle algorithm)
  */
 PUBLIC int socketSetNoDelay(int sid, bool on)
@@ -14923,7 +15235,7 @@ PUBLIC ssize socketWrite(int sid, void *buf, ssize bufsize)
                 continue;
             } else if (errCode == EWOULDBLOCK || errCode == EAGAIN) {
                 if (sofar) {
-                    /* 
+                    /*
                         If some data was written, we mask the EAGAIN for this time. Caller should recall and then
                         will get a negative return code with EAGAIN.
                      */
@@ -15093,7 +15405,7 @@ PUBLIC void socketFree(int sid)
     for (i = 0; i < socketMax; i++) {
         if ((sp = socketList[i]) == NULL) {
             continue;
-        } 
+        }
         socketHighestFd = max(socketHighestFd, sp->sock);
     }
 }
@@ -15215,8 +15527,8 @@ PUBLIC int socketGetPort(int sid)
 
 
 #if ME_UNIX_LIKE || WINDOWS
-/*  
-    Get a socket address from a host/port combination. If a host provides both IPv4 and IPv6 addresses, 
+/*
+    Get a socket address from a host/port combination. If a host provides both IPv4 and IPv6 addresses,
     prefer the IPv4 address. This routine uses getaddrinfo.
     Caller must free addr.
  */
@@ -15246,7 +15558,7 @@ PUBLIC int socketInfo(char *ip, int port, int *family, int *protocol, struct soc
     }
     itosbuf(portBuf, sizeof(portBuf), port, 10);
 
-    /*  
+    /*
         Try to sleuth the address to avoid duplicate address lookups. Then try IPv4 first then IPv6.
      */
     res = 0;
@@ -15325,7 +15637,7 @@ PUBLIC int socketInfo(char *ip, int port, int *family, int *protocol, struct soc
 #endif
 
 
-/*  
+/*
     Return a numerical IP address and port for the given socket info
  */
 PUBLIC int socketAddress(struct sockaddr *addr, int addrlen, char *ip, int ipLen, int *port)
@@ -15398,8 +15710,8 @@ static int ipv6(char *ip)
 }
 
 
-/*  
-    Parse address and return the IP address and port components. Handles ipv4 and ipv6 addresses. 
+/*
+    Parse address and return the IP address and port components. Handles ipv4 and ipv6 addresses.
     If the IP portion is absent, *pip is set to null. If the port portion is absent, port is set to the defaultPort.
     If a ":*" port specifier is used, *pport is set to -1;
     When an address contains an ipv6 port it should be written as:
@@ -15426,7 +15738,7 @@ PUBLIC int socketParseAddress(char *address, char **pip, int *pport, int *secure
         address = &cp[3];
     }
     if (ipv6(address)) {
-        /*  
+        /*
             IPv6. If port is present, it will follow a closing bracket ']'
          */
         if ((cp = strchr(address, ']')) != 0) {
@@ -15460,8 +15772,8 @@ PUBLIC int socketParseAddress(char *address, char **pip, int *pport, int *secure
         }
 
     } else {
-        /*  
-            ipv4 
+        /*
+            ipv4
          */
         ip = sclone(address);
         if ((cp = strchr(ip, ':')) != 0) {
@@ -15475,13 +15787,14 @@ PUBLIC int socketParseAddress(char *address, char **pip, int *pport, int *secure
                 wfree(ip);
                 ip = 0;
             }
-            
+
         } else if (strchr(ip, '.')) {
             *pport = defaultPort;
-            
+
         } else {
             if (isdigit((uchar) *ip)) {
                 *pport = atoi(ip);
+                wfree(ip);
                 ip = 0;
             } else {
                 /* No port present, use callers default */
@@ -15515,7 +15828,7 @@ PUBLIC bool socketAddressIsV6(char *ip)
 }
 
 
-PUBLIC WebsSocket **socketGetList() 
+PUBLIC WebsSocket **socketGetList()
 {
     return socketList;
 }
@@ -15526,8 +15839,623 @@ PUBLIC WebsSocket **socketGetList()
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
+    by the terms of either license. Consult the LICENSE.md distributed with
+    this software for full details and other copyrights.
+
+    Local variables:
+    tab-width: 4
+    c-basic-offset: 4
+    End:
+    vim: sw=4 ts=4 expandtab
+
+    @end
+ */
+
+
+
+/********* Start of file ../../../src/time.c ************/
+
+
+/**
+    time.c - Date and Time handling
+
+    Copyright (c) All Rights Reserved. See details at the end of the file.
+ */
+
+/********************************* Includes ***********************************/
+
+
+
+/********************************** Defines ***********************************/
+
+#define SEC_PER_MIN  (60)
+#define SEC_PER_HOUR (60 * 60)
+#define SEC_PER_DAY  (86400)
+#define SEC_PER_YEAR (INT64(31556952))
+
+/*
+    Token types or'd into the TimeToken value
+ */
+#define TOKEN_DAY       0x01000000
+#define TOKEN_MONTH     0x02000000
+#define TOKEN_ZONE      0x04000000
+#define TOKEN_OFFSET    0x08000000
+#define TOKEN_MASK      0xFF000000
+
+typedef struct TimeToken {
+    char    *name;
+    int     value;
+} TimeToken;
+
+static WebsHash timeTokens = -1;
+
+static TimeToken days[] = {
+    { "sun",  0 | TOKEN_DAY },
+    { "mon",  1 | TOKEN_DAY },
+    { "tue",  2 | TOKEN_DAY },
+    { "wed",  3 | TOKEN_DAY },
+    { "thu",  4 | TOKEN_DAY },
+    { "fri",  5 | TOKEN_DAY },
+    { "sat",  6 | TOKEN_DAY },
+    { 0, 0 },
+};
+
+static TimeToken fullDays[] = {
+    { "sunday",     0 | TOKEN_DAY },
+    { "monday",     1 | TOKEN_DAY },
+    { "tuesday",    2 | TOKEN_DAY },
+    { "wednesday",  3 | TOKEN_DAY },
+    { "thursday",   4 | TOKEN_DAY },
+    { "friday",     5 | TOKEN_DAY },
+    { "saturday",   6 | TOKEN_DAY },
+    { 0, 0 },
+};
+
+/*
+    Make origin 1 to correspond to user date entries 10/28/2014
+ */
+static TimeToken months[] = {
+    { "jan",  1 | TOKEN_MONTH },
+    { "feb",  2 | TOKEN_MONTH },
+    { "mar",  3 | TOKEN_MONTH },
+    { "apr",  4 | TOKEN_MONTH },
+    { "may",  5 | TOKEN_MONTH },
+    { "jun",  6 | TOKEN_MONTH },
+    { "jul",  7 | TOKEN_MONTH },
+    { "aug",  8 | TOKEN_MONTH },
+    { "sep",  9 | TOKEN_MONTH },
+    { "oct", 10 | TOKEN_MONTH },
+    { "nov", 11 | TOKEN_MONTH },
+    { "dec", 12 | TOKEN_MONTH },
+    { 0, 0 },
+};
+
+static TimeToken fullMonths[] = {
+    { "january",    1 | TOKEN_MONTH },
+    { "february",   2 | TOKEN_MONTH },
+    { "march",      3 | TOKEN_MONTH },
+    { "april",      4 | TOKEN_MONTH },
+    { "may",        5 | TOKEN_MONTH },
+    { "june",       6 | TOKEN_MONTH },
+    { "july",       7 | TOKEN_MONTH },
+    { "august",     8 | TOKEN_MONTH },
+    { "september",  9 | TOKEN_MONTH },
+    { "october",   10 | TOKEN_MONTH },
+    { "november",  11 | TOKEN_MONTH },
+    { "december",  12 | TOKEN_MONTH },
+    { 0, 0 }
+};
+
+static TimeToken ampm[] = {
+    { "am", 0 | TOKEN_OFFSET },
+    { "pm", (12 * 3600) | TOKEN_OFFSET },
+    { 0, 0 },
+};
+
+
+static TimeToken zones[] = {
+    { "ut",      0 | TOKEN_ZONE},
+    { "utc",     0 | TOKEN_ZONE},
+    { "gmt",     0 | TOKEN_ZONE},
+    { "edt",  -240 | TOKEN_ZONE},
+    { "est",  -300 | TOKEN_ZONE},
+    { "cdt",  -300 | TOKEN_ZONE},
+    { "cst",  -360 | TOKEN_ZONE},
+    { "mdt",  -360 | TOKEN_ZONE},
+    { "mst",  -420 | TOKEN_ZONE},
+    { "pdt",  -420 | TOKEN_ZONE},
+    { "pst",  -480 | TOKEN_ZONE},
+    { 0, 0 },
+};
+
+
+static TimeToken offsets[] = {
+    { "tomorrow",    86400 | TOKEN_OFFSET},
+    { "yesterday",  -86400 | TOKEN_OFFSET},
+    { "next week",   (86400 * 7) | TOKEN_OFFSET},
+    { "last week",  -(86400 * 7) | TOKEN_OFFSET},
+    { 0, 0 },
+};
+
+static int timeSep = ':';
+
+static int normalMonthStart[] = {
+    0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 0,
+};
+static int leapMonthStart[] = {
+    0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 0
+};
+
+static int leapYear(int year);
+static void validateTime(struct tm *tm, struct tm *defaults);
+
+/************************************ Code ************************************/
+
+PUBLIC int websTimeOpen()
+{
+    TimeToken           *tt;
+
+    timeTokens = hashCreate(59);
+    for (tt = days; tt->name; tt++) {
+        hashEnter(timeTokens, tt->name, valueSymbol(tt), 0);
+    }
+    for (tt = fullDays; tt->name; tt++) {
+        hashEnter(timeTokens, tt->name, valueSymbol(tt), 0);
+    }
+    for (tt = months; tt->name; tt++) {
+        hashEnter(timeTokens, tt->name, valueSymbol(tt), 0);
+    }
+    for (tt = fullMonths; tt->name; tt++) {
+        hashEnter(timeTokens, tt->name, valueSymbol(tt), 0);
+    }
+    for (tt = ampm; tt->name; tt++) {
+        hashEnter(timeTokens, tt->name, valueSymbol(tt), 0);
+    }
+    for (tt = zones; tt->name; tt++) {
+        hashEnter(timeTokens, tt->name, valueSymbol(tt), 0);
+    }
+    for (tt = offsets; tt->name; tt++) {
+        hashEnter(timeTokens, tt->name, valueSymbol(tt), 0);
+    }
+    return 0;
+}
+
+
+PUBLIC void websTimeClose()
+{
+    if (timeTokens >= 0) {
+        hashFree(timeTokens);
+        timeTokens = -1;
+    }
+}
+
+
+static int leapYear(int year)
+{
+    if (year % 4) {
+        return 0;
+    } else if (year % 400 == 0) {
+        return 1;
+    } else if (year % 100 == 0) {
+        return 0;
+    }
+    return 1;
+}
+
+
+static int daysSinceEpoch(int year)
+{
+    int     days;
+
+    days = 365 * (year - 1970);
+    days += ((year-1) / 4) - (1970 / 4);
+    days -= ((year-1) / 100) - (1970 / 100);
+    days += ((year-1) / 400) - (1970 / 400);
+    return days;
+}
+
+
+static WebsTime makeTime(struct tm *tp)
+{
+    int     days, year, month;
+
+    year = tp->tm_year + 1900 + tp->tm_mon / 12;
+    month = tp->tm_mon % 12;
+    if (month < 0) {
+        month += 12;
+        --year;
+    }
+    days = daysSinceEpoch(year);
+    days += leapYear(year) ? leapMonthStart[month] : normalMonthStart[month];
+    days += tp->tm_mday - 1;
+    return (days * SEC_PER_DAY) + ((((((tp->tm_hour * 60)) + tp->tm_min) * 60) + tp->tm_sec));
+}
+
+
+static int lookupSym(char *token, int kind)
+{
+    TimeToken   *tt;
+
+    if ((tt = (TimeToken*) hashLookupSymbol(timeTokens, token)) == 0) {
+        return -1;
+    }
+    if (kind != (tt->value & TOKEN_MASK)) {
+        return -1;
+    }
+    return tt->value & ~TOKEN_MASK;
+}
+
+
+static int getNum(char **token, int sep)
+{
+    int     num;
+
+    if (*token == 0) {
+        return 0;
+    }
+
+    num = atoi(*token);
+    *token = strchr(*token, sep);
+    if (*token) {
+        *token += 1;
+    }
+    return num;
+}
+
+
+static int getNumOrSym(char **token, int sep, int kind, int *isAlpah)
+{
+    char    *cp;
+    int     num;
+
+    assert(token && *token);
+
+    if (*token == 0) {
+        return 0;
+    }
+    if (isalpha((uchar) **token)) {
+        *isAlpah = 1;
+        cp = strchr(*token, sep);
+        if (cp) {
+            *cp++ = '\0';
+        }
+        num = lookupSym(*token, kind);
+        *token = cp;
+        return num;
+    }
+    num = atoi(*token);
+    *token = strchr(*token, sep);
+    if (*token) {
+        *token += 1;
+    }
+    *isAlpah = 0;
+    return num;
+}
+
+
+static void swapDayMonth(struct tm *tp)
+{
+    int     tmp;
+
+    tmp = tp->tm_mday;
+    tp->tm_mday = tp->tm_mon;
+    tp->tm_mon = tmp;
+}
+
+
+/*
+    Parse the a date/time string and return the result in *time. Missing date items may be provided
+    via the defaults argument. This is a tolerant parser. It is not validating and will do its best
+    to parse any possible date string.
+ */
+PUBLIC int websParseDateTime(WebsTime *time, char *dateString, struct tm *defaults)
+{
+    TimeToken       *tt;
+    struct tm       tm;
+    char            *str, *next, *token, *cp, *sep;
+    int64           value;
+    int             kind, hour, min, negate, value1, value2, value3, alpha, alpha2, alpha3;
+    int             dateSep, offset, zoneOffset, fullYear;
+
+    if (!dateString) {
+        dateString = "";
+    }
+    offset = 0;
+    zoneOffset = 0;
+    sep = ", \t";
+    cp = 0;
+    next = 0;
+    fullYear = 0;
+
+    /*
+        Set these mandatory values to -1 so we can tell if they are set to valid values
+        WARNING: all the calculations use tm_year with origin 0, not 1900. It is fixed up below.
+     */
+    tm.tm_year = -MAXINT;
+    tm.tm_mon = tm.tm_mday = tm.tm_hour = tm.tm_sec = tm.tm_min = tm.tm_wday = -1;
+    tm.tm_min = tm.tm_sec = tm.tm_yday = -1;
+
+#if ME_UNIX_LIKE && !CYGWIN
+    tm.tm_gmtoff = 0;
+    tm.tm_zone = 0;
+#endif
+
+    /*
+        Set to -1 to try to determine if DST is in effect
+     */
+    tm.tm_isdst = -1;
+    str = slower(dateString);
+
+    /*
+        Handle ISO dates: 2009-05-21t16:06:05.000z
+     */
+    if (strchr(str, ' ') == 0 && strchr(str, '-') && str[slen(str) - 1] == 'z') {
+        for (cp = str; *cp; cp++) {
+            if (*cp == '-') {
+                *cp = '/';
+            } else if (*cp == 't' && cp > str && isdigit((uchar) cp[-1]) && isdigit((uchar) cp[1]) ) {
+                *cp = ' ';
+            }
+        }
+    }
+    token = stok(str, sep, &next);
+
+    while (token && *token) {
+        if (snumber(token)) {
+            /*
+                Parse either day of month or year. Priority to day of month. Format: <29> Jan <15> <2014>
+             */
+            value = atoi(token);
+            if (value > 3000) {
+                *time = value;
+                return 0;
+            } else if (value > 32 || (tm.tm_mday >= 0 && tm.tm_year == -MAXINT)) {
+                if (value >= 1000) {
+                    fullYear = 1;
+                }
+                tm.tm_year = (int) value - 1900;
+            } else if (tm.tm_mday < 0) {
+                tm.tm_mday = (int) value;
+            }
+
+        } else if (strncmp(token, "gmt", 3) == 0 || strncmp(token, "utc", 3) == 0) {
+            /*
+                Timezone format: GMT|UTC[+-]NN[:]NN
+                GMT-08:00, UTC-0800
+             */
+            token += 3;
+            if (token[0] == '-' || token[0] == '+') {
+                negate = *token == '-' ? -1 : 1;
+                token++;
+            } else {
+                negate = 1;
+            }
+            if (strchr(token, ':')) {
+                hour = getNum(&token, timeSep);
+                min = getNum(&token, timeSep);
+            } else {
+                hour = atoi(token);
+                min = hour % 100;
+                hour /= 100;
+            }
+            zoneOffset = negate * (hour * 60 + min);
+
+        } else if (isalpha((uchar) *token)) {
+            if ((tt = (TimeToken*) hashLookupSymbol(timeTokens, token)) != 0) {
+                kind = tt->value & TOKEN_MASK;
+                value = tt->value & ~TOKEN_MASK;
+                switch (kind) {
+
+                case TOKEN_DAY:
+                    tm.tm_wday = (int) value;
+                    break;
+
+                case TOKEN_MONTH:
+                    tm.tm_mon = (int) value;
+                    break;
+
+                case TOKEN_OFFSET:
+                    /* Named timezones or symbolic names like: tomorrow, yesterday, next week ... */
+                    /* Units are seconds */
+                    offset += (int) value;
+                    break;
+
+                case TOKEN_ZONE:
+                    zoneOffset = (int) value;
+                    break;
+
+                default:
+                    /* Just ignore unknown values */
+                    break;
+                }
+            }
+
+        } else if ((cp = strchr(token, timeSep)) != 0 && isdigit((uchar) token[0])) {
+            /*
+                Time:  10:52[:23]
+                Must not parse GMT-07:30
+             */
+            tm.tm_hour = getNum(&token, timeSep);
+            tm.tm_min = getNum(&token, timeSep);
+            tm.tm_sec = getNum(&token, timeSep);
+
+        } else {
+            dateSep = '/';
+            if (strchr(token, dateSep) == 0) {
+                dateSep = '-';
+                if (strchr(token, dateSep) == 0) {
+                    dateSep = '.';
+                    if (strchr(token, dateSep) == 0) {
+                        dateSep = 0;
+                    }
+                }
+            }
+            if (dateSep) {
+                /*
+                    Date:  07/28/2014, 07/28/08, Jan/28/2014, Jaunuary-28-2014, 28-jan-2014
+                    Support order: dd/mm/yy, mm/dd/yy and yyyy/mm/dd
+                    Support separators "/", ".", "-"
+                 */
+                value1 = getNumOrSym(&token, dateSep, TOKEN_MONTH, &alpha);
+                value2 = getNumOrSym(&token, dateSep, TOKEN_MONTH, &alpha2);
+                value3 = getNumOrSym(&token, dateSep, TOKEN_MONTH, &alpha3);
+
+                if (value1 > 31) {
+                    /* yy/mm/dd */
+                    tm.tm_year = value1;
+                    tm.tm_mon = value2;
+                    tm.tm_mday = value3;
+
+                } else if (value1 > 12 || alpha2) {
+                    /*
+                        dd/mm/yy
+                        Cannot detect 01/02/03  This will be evaluated as Jan 2 2003 below.
+                     */
+                    tm.tm_mday = value1;
+                    tm.tm_mon = value2;
+                    tm.tm_year = value3;
+
+                } else {
+                    /*
+                        The default to parse is mm/dd/yy unless the mm value is out of range
+                     */
+                    tm.tm_mon = value1;
+                    tm.tm_mday = value2;
+                    tm.tm_year = value3;
+                }
+            }
+        }
+        token = stok(NULL, sep, &next);
+    }
+
+    /*
+        Y2K fix and rebias
+     */
+    if (0 <= tm.tm_year && tm.tm_year < 100 && !fullYear) {
+        if (tm.tm_year < 50) {
+            tm.tm_year += 2000;
+        } else {
+            tm.tm_year += 1900;
+        }
+    }
+    if (tm.tm_year >= 1900) {
+        tm.tm_year -= 1900;
+    }
+
+    /*
+        Convert back to origin 0 for months
+     */
+    if (tm.tm_mon > 0) {
+        tm.tm_mon--;
+    }
+
+    /*
+        Validate and fill in missing items with defaults
+     */
+    validateTime(&tm, defaults);
+    *time = makeTime(&tm);
+    *time += -(zoneOffset * SEC_PER_MIN);
+    *time += offset;
+    return 0;
+}
+
+
+static void validateTime(struct tm *tp, struct tm *defaults)
+{
+    struct tm   empty;
+
+    /*
+        Fix apparent day-mon-year ordering issues. Cannot fix everything!
+     */
+    if ((12 <= tp->tm_mon && tp->tm_mon <= 31) && 0 <= tp->tm_mday && tp->tm_mday <= 11) {
+        /*
+            Looks like day month are swapped
+         */
+        swapDayMonth(tp);
+    }
+
+    if (tp->tm_year != -MAXINT && tp->tm_mon >= 0 && tp->tm_mday >= 0 && tp->tm_hour >= 0) {
+        /*  Everything defined */
+        return;
+    }
+
+    /*
+        Use empty time if missing
+     */
+    if (defaults == NULL) {
+        memset(&empty, 0, sizeof(empty));
+        defaults = &empty;
+        empty.tm_mday = 1;
+        empty.tm_year = 70;
+    }
+    if (tp->tm_hour < 0 && tp->tm_min < 0 && tp->tm_sec < 0) {
+        tp->tm_hour = defaults->tm_hour;
+        tp->tm_min = defaults->tm_min;
+        tp->tm_sec = defaults->tm_sec;
+    }
+
+    /*
+        Get weekday, if before today then make next week
+     */
+    if (tp->tm_wday >= 0 && tp->tm_year == -MAXINT && tp->tm_mon < 0 && tp->tm_mday < 0) {
+        tp->tm_mday = defaults->tm_mday + (tp->tm_wday - defaults->tm_wday + 7) % 7;
+        tp->tm_mon = defaults->tm_mon;
+        tp->tm_year = defaults->tm_year;
+    }
+
+    /*
+        Get month, if before this month then make next year
+     */
+    if (tp->tm_mon >= 0 && tp->tm_mon <= 11 && tp->tm_mday < 0) {
+        if (tp->tm_year == -MAXINT) {
+            tp->tm_year = defaults->tm_year + (((tp->tm_mon - defaults->tm_mon) < 0) ? 1 : 0);
+        }
+        tp->tm_mday = defaults->tm_mday;
+    }
+
+    /*
+        Get date, if before current time then make tomorrow
+     */
+    if (tp->tm_hour >= 0 && tp->tm_year == -MAXINT && tp->tm_mon < 0 && tp->tm_mday < 0) {
+        tp->tm_mday = defaults->tm_mday + ((tp->tm_hour - defaults->tm_hour) < 0 ? 1 : 0);
+        tp->tm_mon = defaults->tm_mon;
+        tp->tm_year = defaults->tm_year;
+    }
+    if (tp->tm_year == -MAXINT) {
+        tp->tm_year = defaults->tm_year;
+    }
+    if (tp->tm_mon < 0) {
+        tp->tm_mon = defaults->tm_mon;
+    }
+    if (tp->tm_mday < 0) {
+        tp->tm_mday = defaults->tm_mday;
+    }
+    if (tp->tm_yday < 0) {
+        tp->tm_yday = (leapYear(tp->tm_year + 1900) ?
+            leapMonthStart[tp->tm_mon] : normalMonthStart[tp->tm_mon]) + tp->tm_mday - 1;
+    }
+    if (tp->tm_hour < 0) {
+        tp->tm_hour = defaults->tm_hour;
+    }
+    if (tp->tm_min < 0) {
+        tp->tm_min = defaults->tm_min;
+    }
+    if (tp->tm_sec < 0) {
+        tp->tm_sec = defaults->tm_sec;
+    }
+}
+
+
+/*
+    @copy   default
+
+    Copyright (c) Embedthis Software. All Rights Reserved.
+
+    This software is distributed under commercial and open source licenses.
+    You may use the Embedthis Open Source license or you may acquire a
+    commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.
 
@@ -15572,45 +16500,41 @@ static char *uploadDir;
 
 static void defineUploadVars(Webs *wp);
 static char *getBoundary(Webs *wp, char *buf, ssize bufLen);
-static int initUpload(Webs *wp);
-static int processContentBoundary(Webs *wp, char *line);
-static int processContentData(Webs *wp);
-static int processUploadHeader(Webs *wp, char *line);
+static void initUpload(Webs *wp);
+static void processContentBoundary(Webs *wp, char *line);
+static bool processContentData(Webs *wp);
+static void processUploadHeader(Webs *wp, char *line);
 
 /************************************* Code ***********************************/
 /*
-    The upload handler functions as a filter. It never actually handles a request
+    The upload handler functions as a filter.
+    Return false because the upload handler is not a terminal handler.
  */
 static bool uploadHandler(Webs *wp)
 {
-    assert(websValid(wp));
-
-    if (!(wp->flags & WEBS_UPLOAD)) {
-        return 0;
-    }
-    return initUpload(wp);
+    return 0;
 }
 
 
-static int initUpload(Webs *wp)
+static void initUpload(Webs *wp)
 {
     char    *boundary;
-    
+
     if (wp->uploadState == 0) {
         wp->uploadState = UPLOAD_BOUNDARY;
         if ((boundary = strstr(wp->contentType, "boundary=")) != 0) {
             boundary += 9;
+            wfree(wp->boundary);
             wp->boundary = sfmt("--%s", boundary);
             wp->boundaryLen = strlen(wp->boundary);
         }
         if (wp->boundaryLen == 0 || *wp->boundary == '\0') {
             websError(wp, HTTP_CODE_BAD_REQUEST, "Bad boundary");
-            return -1;
+        } else {
+            websSetVar(wp, "UPLOAD_DIR", uploadDir);
+            wp->files = hashCreate(11);
         }
-        websSetVar(wp, "UPLOAD_DIR", uploadDir);
-        wp->files = hashCreate(11);
     }
-    return 0;
 }
 
 
@@ -15631,14 +16555,16 @@ PUBLIC void websFreeUpload(Webs *wp)
     WebsUpload  *up;
     WebsKey     *s;
 
-    for (s = hashFirst(wp->files); s; s = hashNext(wp->files, s)) {
-        up = s->content.value.symbol;
-        freeUploadFile(up);
-        if (up == wp->currentFile) {
-            wp->currentFile = 0;
+    if (wp->files >= 0) {
+        for (s = hashFirst(wp->files); s; s = hashNext(wp->files, s)) {
+            up = s->content.value.symbol;
+            freeUploadFile(up);
+            if (up == wp->currentFile) {
+                wp->currentFile = 0;
+            }
         }
+        hashFree(wp->files);
     }
-    hashFree(wp->files);
     if (wp->currentFile) {
         freeUploadFile(wp->currentFile);
         wp->currentFile = 0;
@@ -15650,13 +16576,15 @@ PUBLIC void websFreeUpload(Webs *wp)
 }
 
 
-PUBLIC int websProcessUploadData(Webs *wp) 
+PUBLIC bool websProcessUploadData(Webs *wp)
 {
     char    *line, *nextTok;
     ssize   len, nbytes;
-    int     done, rc;
-    
-    for (done = 0, line = 0; !done; ) {
+    bool    canProceed;
+
+    line = 0;
+    canProceed = 1; 
+    while (canProceed && !wp->finalized && wp->uploadState != UPLOAD_CONTENT_END) {
         if  (wp->uploadState == UPLOAD_BOUNDARY || wp->uploadState == UPLOAD_CONTENT_HEADER) {
             /*
                 Parse the next input line
@@ -15664,6 +16592,7 @@ PUBLIC int websProcessUploadData(Webs *wp)
             line = wp->input.servp;
             if ((nextTok = memchr(line, '\n', bufLen(&wp->input))) == 0) {
                 /* Incomplete line */
+                canProceed = 0;
                 break;
             }
             *nextTok++ = '\0';
@@ -15677,72 +16606,59 @@ PUBLIC int websProcessUploadData(Webs *wp)
         }
         switch (wp->uploadState) {
         case 0:
-            if (initUpload(wp) < 0) {
-                done++;
-            }
+            initUpload(wp);
             break;
 
         case UPLOAD_BOUNDARY:
-            if (processContentBoundary(wp, line) < 0) {
-                done++;
-            }
+            processContentBoundary(wp, line);
             break;
 
         case UPLOAD_CONTENT_HEADER:
-            if (processUploadHeader(wp, line) < 0) {
-                done++;
-            }
+            processUploadHeader(wp, line);
             break;
 
         case UPLOAD_CONTENT_DATA:
-            if ((rc = processContentData(wp)) < 0) {
-                done++;
-            }
+            canProceed = processContentData(wp);
             if (bufLen(&wp->input) < wp->boundaryLen) {
                 /*  Incomplete boundary - return to get more data */
-                done++;
+                canProceed = 0;
             }
             break;
 
         case UPLOAD_CONTENT_END:
-            done++;
             break;
         }
     }
-    if (!websValid(wp)) {
-        return -1;
-    }
     bufCompact(&wp->input);
-    return 0;
+    return canProceed;
 }
 
 
-static int processContentBoundary(Webs *wp, char *line)
+static void processContentBoundary(Webs *wp, char *line)
 {
     /*
         Expecting a multipart boundary string
      */
     if (strncmp(wp->boundary, line, wp->boundaryLen) != 0) {
         websError(wp, HTTP_CODE_BAD_REQUEST, "Bad upload state. Incomplete boundary");
-        return -1;
-    }
-    if (line[wp->boundaryLen] && strcmp(&line[wp->boundaryLen], "--") == 0) {
+
+    } else if (line[wp->boundaryLen] && strcmp(&line[wp->boundaryLen], "--") == 0) {
         wp->uploadState = UPLOAD_CONTENT_END;
+
     } else {
         wp->uploadState = UPLOAD_CONTENT_HEADER;
     }
-    return 0;
 }
 
 
-static int processUploadHeader(Webs *wp, char *line)
+static void processUploadHeader(Webs *wp, char *line)
 {
     WebsUpload  *file;
-    char            *key, *headerTok, *rest, *nextPair, *value;
+    char        *key, *headerTok, *rest, *nextPair, *value;
 
     if (line[0] == '\0') {
         wp->uploadState = UPLOAD_CONTENT_DATA;
-        return 0;
+        return;
     }
     trace(7, "Header line: %s", line);
 
@@ -15750,20 +16666,22 @@ static int processUploadHeader(Webs *wp, char *line)
     stok(line, ": ", &rest);
 
     if (scaselesscmp(headerTok, "Content-Disposition") == 0) {
-        /*  
+        /*
             The content disposition header describes either a form variable or an uploaded file.
-        
+
             Content-Disposition: form-data; name="field1"
             >>blank line
             Field Data
             ---boundary
-     
+
             Content-Disposition: form-data; name="field1" filename="user.file"
             >>blank line
             File data
             ---boundary
          */
         key = rest;
+        wfree(wp->uploadVar);
+        wfree(wp->clientFilename);
         wp->uploadVar = wp->clientFilename = 0;
         while (key && stok(key, ";\r\n", &nextPair)) {
 
@@ -15775,36 +16693,39 @@ static int processUploadHeader(Webs *wp, char *line)
                 /* Nothing to do */
 
             } else if (scaselesscmp(key, "name") == 0) {
+                wfree(wp->uploadVar);
                 wp->uploadVar = sclone(value);
 
             } else if (scaselesscmp(key, "filename") == 0) {
                 if (wp->uploadVar == 0) {
                     websError(wp, HTTP_CODE_BAD_REQUEST, "Bad upload state. Missing name field");
-                    return -1;
+                    return;
                 }
                 value = websNormalizeUriPath(value);
                 if (*value == '.' || !websValidUriChars(value) || strpbrk(value, "\\/:*?<>|~\"'%`^\n\r\t\f")) {
                     websError(wp, HTTP_CODE_INTERNAL_SERVER_ERROR, "Bad upload client filename");
-                    return -1;
+                    wfree(value);
+                    return;
                 }
                 wfree(wp->clientFilename);
-                wp->clientFilename = sclone(value);
+                wp->clientFilename = value;
 
-                /*  
+                /*
                     Create the file to hold the uploaded data
                  */
+                wfree(wp->uploadTmp);
                 if ((wp->uploadTmp = websTempFile(uploadDir, "tmp")) == 0) {
-                    websError(wp, HTTP_CODE_INTERNAL_SERVER_ERROR, 
+                    websError(wp, HTTP_CODE_INTERNAL_SERVER_ERROR,
                         "Cannot create upload temp file %s. Check upload temp dir %s", wp->uploadTmp, uploadDir);
-                    return -1;
+                    return;
                 }
                 trace(5, "File upload of: %s stored as %s", wp->clientFilename, wp->uploadTmp);
 
                 if ((wp->upfd = open(wp->uploadTmp, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0600)) < 0) {
                     websError(wp, HTTP_CODE_INTERNAL_SERVER_ERROR, "Cannot open upload temp file %s", wp->uploadTmp);
-                    return -1;
+                    return;
                 }
-                /*  
+                /*
                     Create the files[id]
                  */
                 file = wp->currentFile = walloc(sizeof(WebsUpload));
@@ -15821,7 +16742,6 @@ static int processUploadHeader(Webs *wp, char *line)
             wp->currentFile->contentType = sclone(rest);
         }
     }
-    return 0;
 }
 
 
@@ -15857,7 +16777,7 @@ static int writeToFile(Webs *wp, char *data, ssize len)
         return -1;
     }
     if (len > 0) {
-        /*  
+        /*
             File upload. Write the file data.
          */
         if ((rc = write(wp->upfd, data, (int) len)) != len) {
@@ -15871,12 +16791,12 @@ static int writeToFile(Webs *wp, char *data, ssize len)
 }
 
 
-static int processContentData(Webs *wp)
+static bool processContentData(Webs *wp)
 {
     WebsUpload  *file;
-    WebsBuf         *content;
-    ssize           size, nbytes;
-    char            *data, *bp;
+    WebsBuf     *content;
+    ssize       size, nbytes;
+    char        *data, *bp;
 
     content = &wp->input;
     file = wp->currentFile;
@@ -15889,13 +16809,14 @@ static int processContentData(Webs *wp)
     if ((bp = getBoundary(wp, content->servp, size)) == 0) {
         trace(7, "uploadFilter: Got boundary filename %x", wp->clientFilename);
         if (wp->clientFilename) {
-            /*  
+            /*
                 No signature found yet. probably more data to come. Must handle split boundaries.
              */
             data = content->servp;
             nbytes = ((int) (content->endp - data)) - (wp->boundaryLen - 1);
-            if (nbytes > 0 && writeToFile(wp, content->servp, nbytes) < 0) {
-                return -1;
+            if (writeToFile(wp, content->servp, nbytes) < 0) {
+                /* Proceed to handle error */
+                return 1;
             }
             websConsumeInput(wp, nbytes);
             /* Get more data */
@@ -15907,27 +16828,28 @@ static int processContentData(Webs *wp)
 
     if (nbytes > 0) {
         websConsumeInput(wp, nbytes);
-        /*  
+        /*
             This is the CRLF before the boundary
          */
         if (nbytes >= 2 && data[nbytes - 2] == '\r' && data[nbytes - 1] == '\n') {
             nbytes -= 2;
         }
         if (wp->clientFilename) {
-            /*  
+            /*
                 Write the last bit of file data and add to the list of files and define environment variables
              */
             if (writeToFile(wp, data, nbytes) < 0) {
-                return -1;
+                /* Proceed to handle error */
+                return 1;
             }
             hashEnter(wp->files, wp->uploadVar, valueSymbol(file), 0);
             defineUploadVars(wp);
 
         } else {
-            /*  
+            /*
                 Normal string form data variables
              */
-            data[nbytes] = '\0'; 
+            data[nbytes] = '\0';
             trace(5, "uploadFilter: form[%s] = %s", wp->uploadVar, data);
             websDecodeUrl(wp->uploadVar, wp->uploadVar, -1);
             websDecodeUrl(data, data, -1);
@@ -15935,23 +16857,24 @@ static int processContentData(Webs *wp)
         }
     }
     if (wp->clientFilename) {
-        /*  
+        /*
             Now have all the data (we've seen the boundary)
          */
         close(wp->upfd);
         wp->upfd = -1;
+        wfree(wp->clientFilename);
         wp->clientFilename = 0;
         wfree(wp->uploadTmp);
         wp->uploadTmp = 0;
     }
     wp->uploadState = UPLOAD_BOUNDARY;
-    return 0;
+    return 1;
 }
 
 
-/*  
+/*
     Find the boundary signature in memory. Returns pointer to the first match.
- */ 
+ */
 static char *getBoundary(Webs *wp, char *buf, ssize bufLen)
 {
     char    *cp, *endp;
@@ -15984,7 +16907,7 @@ WebsUpload *websLookupUpload(Webs *wp, char *key)
 {
     WebsKey     *sp;
 
-    if (wp->files) {
+    if (wp->files >= 0) {
         if ((sp = hashLookup(wp->files, key)) == 0) {
             return 0;
         }
@@ -16014,7 +16937,7 @@ PUBLIC void websUploadOpen()
     websDefineHandler("upload", 0, uploadHandler, 0, 0);
 }
 
-#endif
+#endif /* ME_GOAHEAD_UPLOAD */
 
 /*
     @copy   default
@@ -16022,7 +16945,7 @@ PUBLIC void websUploadOpen()
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.

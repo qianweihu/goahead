@@ -43,7 +43,7 @@ static int bigTest(int eid, Webs *wp, int argc, char **argv);
 static void actionTest(Webs *wp);
 static void sessionTest(Webs *wp);
 static void showTest(Webs *wp);
-#if ME_GOAHEAD_UPLOAD
+#if ME_GOAHEAD_UPLOAD && !ME_ROM
 static void uploadTest(Webs *wp);
 #endif
 #if ME_GOAHEAD_LEGACY
@@ -52,16 +52,18 @@ static int legacyTest(Webs *wp, char *prefix, char *dir, int flags);
 #if ME_UNIX_LIKE
 static void sigHandler(int signo);
 #endif
+static void exitProc(void *data, int id);
 
 /*********************************** Code *************************************/
 
 MAIN(goahead, int argc, char **argv, char **envp)
 {
     char    *argp, *auth, *home, *documents, *endpoints, *endpoint, *route, *tok, *lspec;
-    int     argind;
+    int     argind, duration;
 
     route = "route.txt";
     auth = "auth.txt";
+    duration = 0;
 
     for (argind = 1; argind < argc; argind++) {
         argp = argv[argind];
@@ -79,6 +81,10 @@ MAIN(goahead, int argc, char **argv, char **envp)
 
         } else if (smatch(argp, "--debugger") || smatch(argp, "-d") || smatch(argp, "-D")) {
             websSetDebug(1);
+
+        } else if (smatch(argp, "--duration")) {
+            if (argind >= argc) usage();
+            duration = atoi(argv[++argind]);
 
         } else if (smatch(argp, "--home")) {
             if (argind >= argc) usage();
@@ -153,7 +159,7 @@ MAIN(goahead, int argc, char **argv, char **envp)
     websDefineAction("test", actionTest);
     websDefineAction("sessionTest", sessionTest);
     websDefineAction("showTest", showTest);
-#if ME_GOAHEAD_UPLOAD
+#if ME_GOAHEAD_UPLOAD && !ME_ROM
     websDefineAction("uploadTest", uploadTest);
 #endif
 
@@ -168,10 +174,21 @@ MAIN(goahead, int argc, char **argv, char **envp)
         }
     }
 #endif
+    if (duration) {
+        printf("Running for %d secs\n", duration);
+        websStartEvent(duration * 1000, (WebsEventProc) exitProc, 0);
+    }
     websServiceEvents(&finished);
     logmsg(1, "Instructed to exit\n");
     websClose();
     return 0;
+}
+
+
+static void exitProc(void *data, int id) 
+{
+    websStopEvent(id);
+    finished = 1;
 }
 
 
@@ -339,14 +356,14 @@ static void showTest(Webs *wp)
 }
 
 
-#if ME_GOAHEAD_UPLOAD
+#if ME_GOAHEAD_UPLOAD && !ME_ROM
 /*
     Dump the file upload details. Don't actually do anything with the uploaded file.
  */
 static void uploadTest(Webs *wp)
 {
     WebsKey         *s;
-    WebsUpload  *up;
+    WebsUpload      *up;
     char            *upfile;
 
     websSetStatus(wp, 200);

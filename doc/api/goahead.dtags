@@ -192,6 +192,13 @@
       <arglist>(WebsHash id, char *name)</arglist>
     </member>
     <member kind="function">
+      <type>void *</type>
+      <name>hashLookupSymbol</name>
+      <anchorfile>group___webs_hash.html</anchorfile>
+      <anchor>ga31d4fa42da39f07cb4e4d7e1ab5d8371</anchor>
+      <arglist>(WebsHash sd, char *name)</arglist>
+    </member>
+    <member kind="function">
       <type>WebsKey *</type>
       <name>hashNext</name>
       <anchorfile>group___webs_hash.html</anchorfile>
@@ -417,8 +424,8 @@
       <type>int</type>
       <name>socketSelect</name>
       <anchorfile>group___webs_socket.html</anchorfile>
-      <anchor>gaaae04fe85c99febd353fafe97f1fd11f</anchor>
-      <arglist>(int sid, WebsTime timeout)</arglist>
+      <anchor>gaa4d7c7dee5c5104c2f19b7b702ee8c4f</anchor>
+      <arglist>(int sid, int timeout)</arglist>
     </member>
     <member kind="function">
       <type>int</type>
@@ -629,10 +636,10 @@
       <arglist>(int id, int delay)</arglist>
     </member>
     <member kind="function">
-      <type>WebsTime</type>
+      <type>int</type>
       <name>websRunEvents</name>
       <anchorfile>group___webs_runtime.html</anchorfile>
-      <anchor>ga7fea65d6ecddb364c0522fe075dabe0c</anchor>
+      <anchor>ga5fb0d295f0027b2d45d685b2cf74558e</anchor>
       <arglist>()</arglist>
     </member>
     <member kind="function">
@@ -826,10 +833,10 @@
       <arglist>()</arglist>
     </member>
     <member kind="function">
-      <type>WebsTime</type>
+      <type>int</type>
       <name>websCgiPoll</name>
       <anchorfile>group___webs.html</anchorfile>
-      <anchor>ga763d15e8e4fbb271d596cfc96b81b2d5</anchor>
+      <anchor>ga2ba15b61fb46c880fa4f443ac69976c2</anchor>
       <arglist>()</arglist>
     </member>
     <member kind="function">
@@ -1310,16 +1317,23 @@
     </member>
     <member kind="function">
       <type>int</type>
+      <name>websParseDateTime</name>
+      <anchorfile>group___webs.html</anchorfile>
+      <anchor>gaff9d3f2f19119d5b42ae0e35a55781d3</anchor>
+      <arglist>(WebsTime *time, char *date, struct tm *defaults)</arglist>
+    </member>
+    <member kind="function">
+      <type>bool</type>
       <name>websProcessCgiData</name>
       <anchorfile>group___webs.html</anchorfile>
-      <anchor>gac2b3fb36265e574114d52d2cb37b62b9</anchor>
+      <anchor>ga0853e59f6f1dba6c94c8d3d659106e7f</anchor>
       <arglist>(Webs *wp)</arglist>
     </member>
     <member kind="function">
-      <type>int</type>
+      <type>bool</type>
       <name>websProcessUploadData</name>
       <anchorfile>group___webs.html</anchorfile>
-      <anchor>gad6b26796bb47176098f6f27424cf0dd5</anchor>
+      <anchor>gabf36424ddd2ef63ac20fc1419debc90e</anchor>
       <arglist>(Webs *wp)</arglist>
     </member>
     <member kind="function">
@@ -1417,8 +1431,8 @@
       <type>void</type>
       <name>websSetCookie</name>
       <anchorfile>group___webs.html</anchorfile>
-      <anchor>ga1db4d8829a30eb04308568b6e7c63bb6</anchor>
-      <arglist>(Webs *wp, char *name, char *value, char *path, char *domain, WebsTime lifespan, int flags)</arglist>
+      <anchor>gaa56b71d8ac7c2c5f6543ebe473d4963d</anchor>
+      <arglist>(Webs *wp, char *name, char *value, char *path, char *domain, int lifespan, int flags)</arglist>
     </member>
     <member kind="function">
       <type>void</type>
@@ -1524,6 +1538,20 @@
       <anchorfile>group___webs.html</anchorfile>
       <anchor>ga58d6c3612158fe5471c16998478ea31c</anchor>
       <arglist>(Webs *wp, char *name)</arglist>
+    </member>
+    <member kind="function">
+      <type>void</type>
+      <name>websTimeClose</name>
+      <anchorfile>group___webs.html</anchorfile>
+      <anchor>ga110a18fc07ebc245606771f3f8a9c622</anchor>
+      <arglist>()</arglist>
+    </member>
+    <member kind="function">
+      <type>int</type>
+      <name>websTimeOpen</name>
+      <anchorfile>group___webs.html</anchorfile>
+      <anchor>ga51222aacffda84d537d28a3f705995d2</anchor>
+      <arglist>()</arglist>
     </member>
     <member kind="function">
       <type>int</type>
@@ -1833,8 +1861,8 @@
       <type>WebsSession *</type>
       <name>websAllocSession</name>
       <anchorfile>group___webs_session.html</anchorfile>
-      <anchor>ga69b6c95bd3d6a7ed5fde4cdefb8e4dcc</anchor>
-      <arglist>(Webs *wp, char *id, WebsTime lifespan)</arglist>
+      <anchor>ga66fc8260c9163b24fae7cd75e9b8b2b7</anchor>
+      <arglist>(Webs *wp, char *id, int lifespan)</arglist>
     </member>
     <member kind="function">
       <type>WebsSession *</type>

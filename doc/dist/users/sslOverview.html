@@ -2,40 +2,41 @@
 <html lang="en">
 <head>
     <title>SSL Overview</title>
-    <!-- Copyright Embedthis Software. All Rights Reserved. -->
+    
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-    <meta charset="utf-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-    <meta name="description" content="Simple, fast, secure embedded web server" />
-    <link href='https://fonts.googleapis.com/css?family=Source+Sans+Pro:400,700|Open+Sans:300italic,400,300,700'
-        rel='stylesheet' type='text/css'>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+    <meta name="description" content="Simple, fast, secure embedded web server">
+    <link href='https://fonts.googleapis.com/css?family=Source+Sans+Pro:400,700|Open+Sans:300italic,400,300,700' rel='stylesheet' type='text/css'>
     <link href='https://fonts.googleapis.com/css?family=Julius+Sans+One' rel='stylesheet' type='text/css'>
-    <link href="../images/favicon.ico" rel="shortcut icon" />
-    <link href="../semantic-ui/semantic.css" rel="stylesheet" type="text/css" />
-    <link href="../css/all.css" rel="stylesheet" type="text/css" />
+    
+    <link href="../images/favicon.ico" rel="shortcut icon">
+    <link href="../lib/semantic-ui/semantic.min.css" rel="stylesheet" type="text/css">
+    <link href="../css/all.min.css" rel="stylesheet" type="text/css">
+    <link href="../css/api.min.css" rel="stylesheet" type="text/css">
     
 
-</head>
+
 <body class="show-sidebar">
         <div class="sidebar">
         <div class="ui large left vertical inverted labeled menu">
             <div class="item">
-                <a href="../index.html" class="logo">GoAhead Docs</a>
+                <a href="../" class="logo">GoAhead Docs</a>
             </div>
             <div class="item">
-                <a href="../index.html">
+                <a href="../">
                     <b>General</b>
                 </a>
                 <div class="menu">
-                    <a class="item" href="../index.html">GoAhead Overview</a>
+                    <a class="item" href="../">GoAhead Overview</a>
                     <a class="item" href="../users/features.html">GoAhead Features</a>
                     <a class="item" href="https://embedthis.com/goahead/download.html">Download</a> 
-                    <a class="item" href="../licensing/index.html">Licensing</a>
+                    <a class="item" href="../licensing/">Licensing</a>
                 </div>
             </div>
             <div class="item">
-                <a href="../start/index.html">
+                <a href="../start/">
                     <b>Getting Started</b>
                 </a>
                 <div class="menu">
@@ -48,7 +49,7 @@
                 </div>
             </div>
             <div class="item">
-                <a href="../users/index.html"><b>User's Guide</b></a>
+                <a href="../users/"><b>User's Guide</b></a>
                 <div class="menu">
                     <a class="item" href="../users/ports.html">Ports and Binding</a>
                     <a class="item" href="../users/routing.html">Routing Requests</a>
@@ -65,7 +66,7 @@
                 </div>
             </div>
             <div class="item">
-                <a href="../developers/index.html">Developer's Guide</a>
+                <a href="../developers/">Developer's Guide</a>
                 <div class="menu">
                     <a class="item" href="../developers/embedding.html">Embedding GoAhead</a>
                     <a class="item" href="../developers/handlers.html">Creating GoAhead Handlers</a>
@@ -75,7 +76,7 @@
                 </div>
             </div>
             <div class="item">
-                <a href="../ref/index.html">Reference Guide</a>
+                <a href="../ref/">Reference Guide</a>
                 <div class="menu">
                     <a class="item" href="../ref/compatibility.html">Compatibility</a>
                     <a class="item" href="../ref/native.html">API Library</a>
@@ -134,7 +135,7 @@
             <a class="section" href="../">Home</a>
             
             <div class="divider">/</div>
-            <a class="section" href="index.html">
+            <a class="section" href="../users/">
                 User's Guide
             </a>
             
@@ -164,7 +165,7 @@
 
             <a href="ssl.html">SSL for GoAhead</a>.</p>
             <a id="cryptographicTechniques"></a>
-            <h2 >Cryptographic Techniques</h2>
+            <h2>Cryptographic Techniques</h2>
             <p>Understanding SSL requires an understanding of cryptographic algorithms, message digest functions (aka.
             one-way or hash functions), and digital signatures. The following section provides a brief introduction to
             the cryptographic foundations of SSL. If you are already familiar with this material, please skip forward
@@ -227,7 +228,7 @@
             contains a unique sequence number. This protects the bank from a fraudulent claim from Alice that she did
             not send the message &mdash; only she could have signed it (non-repudiation).</p><a id="certificates"></a>
 
-            <h2 >Certificates</h2>
+            <h2>Certificates</h2>
             <p>Although Alice could have sent a private message to the bank, signed it, and ensured the integrity of
             the message, she still needs to be sure that she is really communicating with the bank. This means that she
             needs to be sure that the public key she is using corresponds to the bank's private key. Similarly, the
@@ -249,26 +250,26 @@
             <table title="cert" class="ui table segment">
                 <tbody>
                     <tr>
-                        <td class="four wide">Subject</td>
-                        <td>Distinguished Name, Public Key</td>
-                    </tr>
+                        <td class="four wide">Subject
+                        <td>Distinguished Name, Public Key
+                    
                     <tr>
-                        <td>Issuer</td>
-                        <td>Distinguished Name, Signature</td>
-                    </tr>
+                        <td>Issuer
+                        <td>Distinguished Name, Signature
+                    
                     <tr>
-                        <td>Period of Validity</td>
-                        <td>Not Before Date, Not After Date</td>
-                    </tr>
+                        <td>Period of Validity
+                        <td>Not Before Date, Not After Date
+                    
                     <tr>
-                        <td class="pivot class">Administrative Information</td>
-                        <td>Version, Serial Number</td>
-                    </tr>
+                        <td class="pivot class">Administrative Information
+                        <td>Version, Serial Number
+                    
                     <tr>
-                        <td>Extended Information</td>
-                        <td>Basic Constraints, Netscape Flags, etc.</td>
-                    </tr>
-                </tbody>
+                        <td>Extended Information
+                        <td>Basic Constraints, Netscape Flags, etc.
+                    
+                
             </table>
             <p>A distinguished name is used to provide an identity in a specific context &mdash; for instance, an
             individual might have a personal certificate as well as one for their identity as an employee.
@@ -278,50 +279,50 @@
             <table title="info" class="ui table segment">
                 <thead>
                     <tr>
-                        <th>DN Field</th>
-                        <th>Abbrev.</th>
-                        <th>Description</th>
-                        <th>Example</th>
-                    </tr>
-                </thead>
+                        <th>DN Field
+                        <th>Abbrev.
+                        <th>Description
+                        <th>Example
+                    
+                
                 <tbody>
                     <tr>
-                        <td>Common Name</td>
-                        <td>CN</td>
-                        <td>Name being certified</td>
-                        <td>CN=Joe Average</td>
-                    </tr>
+                        <td>Common Name
+                        <td>CN
+                        <td>Name being certified
+                        <td>CN=Joe Average
+                    
                     <tr>
-                        <td>Organization or Company</td>
-                        <td>O</td>
-                        <td>Name is associated with this organization</td>
-                        <td>O=Snake Oil, Ltd.</td>
-                    </tr>
+                        <td>Organization or Company
+                        <td>O
+                        <td>Name is associated with this organization
+                        <td>O=Snake Oil, Ltd.
+                    
                     <tr>
-                        <td>Organizational Unit</td>
-                        <td>OU</td>
-                        <td>Name is associated with this organization unit, such as a department</td>
-                        <td>OU=Research Institute</td>
-                    </tr>
+                        <td>Organizational Unit
+                        <td>OU
+                        <td>Name is associated with this organization unit, such as a department
+                        <td>OU=Research Institute
+                    
                     <tr>
-                        <td>City/Locality</td>
-                        <td>L</td>
-                        <td>Name is located in this City</td>
-                        <td>L=Snake City</td>
-                    </tr>
+                        <td>City/Locality
+                        <td>L
+                        <td>Name is located in this City
+                        <td>L=Snake City
+                    
                     <tr>
-                        <td>State/Province</td>
-                        <td>ST</td>
-                        <td>Name is located in this State/Province</td>
-                        <td>ST=Desert</td>
-                    </tr>
+                        <td>State/Province
+                        <td>ST
+                        <td>Name is located in this State/Province
+                        <td>ST=Desert
+                    
                     <tr>
-                        <td>Country</td>
-                        <td>C</td>
-                        <td>Name is located in this Country (ISO code)</td>
-                        <td>C=XZ</td>
-                    </tr>
-                </tbody>
+                        <td>Country
+                        <td>C
+                        <td>Name is located in this Country (ISO code)
+                        <td>C=XZ
+                    
+                
             </table>
             <p>A Certificate Authority may define a policy specifying which distinguished field names are optional, and
             which are required. It may also place requirements upon the field contents, as may users of certificates.
@@ -375,8 +376,7 @@ dUHzICxBVC1lnHyYGjDuAMhe396lYAn8bCld1/L4NMGBCQ==
             root authority reduces the risk in trusting this key &mdash; it would be obvious if someone else publicized
             a key claiming to be the authority. Browsers are preconfigured to trust well-known certificate
             authorities.</p>
-            <p>A number of companies, such as <a href="http://www.thawte.com/">Thawte</a> and <a href=
-            "http://www.verisign.com/">VeriSign</a> have established themselves as Certificate Authorities. These
+            <p>A number of companies, such as <a href="http://www.thawte.com/">Thawte</a> and <a href=http://www.verisign.com/>VeriSign</a> have established themselves as Certificate Authorities. These
             companies provide the following services:</p>
             <ul>
                 <li>Verifying certificate requests</li>
@@ -403,7 +403,7 @@ dUHzICxBVC1lnHyYGjDuAMhe396lYAn8bCld1/L4NMGBCQ==
             browser will accept all certificates signed by that Certificate Authority.</p>
         
         <a id="sslOverview"></a>
-        <h2 >Secure Sockets Layer (SSL) Overview</h2>
+        <h2>Secure Sockets Layer (SSL) Overview</h2>
         <p>The Secure Sockets Layer protocols designed to support a range of choices for specific algorithms used for
         cryptography, digests, and signatures. This allows algorithm selection for specific servers to be made based on
         legal, export or other concerns, and also enables the protocol to take advantage of new algorithms. Choices are
@@ -413,30 +413,30 @@ dUHzICxBVC1lnHyYGjDuAMhe396lYAn8bCld1/L4NMGBCQ==
         <table title="protocols" class="ui table segment">
             <thead>
                 <tr>
-                    <th>Version</th>
-                    <th>Source</th>
-                    <th>Description</th>
-                </tr>
-            </thead>
+                    <th>Version
+                    <th>Source
+                    <th>Description
+                
+            
             <tbody>
                 <tr>
-                    <td>SSL v2.0</td>
-                    <td>Vendor Standard (from Netscape Corp.)</td>
-                    <td>First SSL protocol for which implementations exists</td>
-                </tr>
+                    <td>SSL v2.0
+                    <td>Vendor Standard (from Netscape Corp.)
+                    <td>First SSL protocol for which implementations exists
+                
                 <tr>
-                    <td>SSL v3.0</td>
-                    <td>Expired Internet Draft (from Netscape Corp.)</td>
+                    <td>SSL v3.0
+                    <td>Expired Internet Draft (from Netscape Corp.)
                     <td>Revisions to prevent specific security attacks, add non-RSA ciphers, and support for
-                    certificate chains</td>
-                </tr>
+                    certificate chains
+                
                 <tr>
-                    <td>TLS v1.0</td>
-                    <td>Proposed Internet Standard (from IETF)</td>
+                    <td>TLS v1.0
+                    <td>Proposed Internet Standard (from IETF)
                     <td>Revision of SSL 3.0 to update the MAC layer to HMAC, add block padding for block ciphers,
-                    message order standardization and more alert messages.</td>
-                </tr>
-            </tbody>
+                    message order standardization and more alert messages.
+                
+            
         </table>
         <p>There are a number of versions of the SSL protocol, as shown in <a href="#table4">Table 4</a>. As noted
         there, one of the benefits in SSL 3.0 is that it adds support of certificate chain loading. This feature allows
@@ -551,32 +551,12 @@ dUHzICxBVC1lnHyYGjDuAMhe396lYAn8bCld1/L4NMGBCQ==
         <p>&copy; Embedthis Software, 2003-2015. All rights reserved.</p>
     </div>
 
-    <script src="../jquery/jquery.min.js"></script>
-    <script src="../semantic-ui/semantic.js"></script>
-    <script>
-        var sl = $('.sidebar-launch');
-        $('.sidebar-launch').click(function() {
-            var body = $('body');
-            if (!body.hasClass('show-sidebar')) {
-                body.addClass('show-sidebar');
-                $('.sidebar').css('visibility', 'visible');
-            } else {
-                body.removeClass('show-sidebar');
-                $('.sidebar').css('visibility', 'hidden');
-            }
-        });
-        $('.sidebar a.item').click(function(e) {
-            sessionStorage.setItem('scroll-top', $('.sidebar').scrollTop());
-        });
-        $(function() {
-            var url = '../users/sslOverview.html';
-            var active = $('.sidebar a[href="' + url +'"]');
-            active.addClass('active');
-            $('.sidebar').scrollTop(sessionStorage.getItem('scroll-top'));
-        });
-    </script> 
+    <script src="../lib/jquery/jquery.min.js"></script>
+    <script src="../lib/semantic-ui/semantic.min.js"></script>
+    <script src="../scripts/sidebar.min.js"></script>
+     
 
         
 
-</body>
-</html>
+
+

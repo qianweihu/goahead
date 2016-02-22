@@ -5,13 +5,13 @@
 
     In this scheme Users have passwords and can have multiple roles. A role is associated with the ability to do
     things like "admin" or "user" or "support". A role may have abilities (which are typically verbs) like "add",
-    "shutdown". 
+    "shutdown".
 
-    When the web server starts up, it loads a route and authentication configuration file that specifies the Users, 
+    When the web server starts up, it loads a route and authentication configuration file that specifies the Users,
     Roles and Routes.  Routes specify the required abilities to access URLs by specifying the URL prefix. Once logged
     in, the user's abilities are tested against the route abilities. When the web server receivess a request, the set of
     Routes is consulted to select the best route. If the routes requires abilities, the user must be logged in and
-    authenticated. 
+    authenticated.
 
     Three authentication backend protocols are supported:
         HTTP basic authentication which uses browser dialogs and clear text passwords (insecure unless over TLS)
@@ -98,6 +98,7 @@ PUBLIC bool websAuthenticate(Webs *wp)
          */
         if ((username = (char*) websGetSessionVar(wp, WEBS_SESSION_USERNAME, 0)) != 0) {
             cached = 1;
+            wfree(wp->username);
             wp->username = sclone(username);
         }
     }
@@ -126,10 +127,10 @@ PUBLIC bool websAuthenticate(Webs *wp)
             return 0;
         }
         /*
-            Store authentication state and user in session storage                                         
-         */                                                                                                
-        if (websGetSession(wp, 1) != 0) {                                                    
-            websSetSessionVar(wp, WEBS_SESSION_USERNAME, wp->username);                                
+            Store authentication state and user in session storage
+         */
+        if (websGetSession(wp, 1) != 0) {
+            websSetSessionVar(wp, WEBS_SESSION_USERNAME, wp->username);
         }
     }
     return 1;
@@ -139,7 +140,7 @@ PUBLIC bool websAuthenticate(Webs *wp)
 PUBLIC int websOpenAuth(int minimal)
 {
     char    sbuf[64];
-    
+
     assert(minimal == 0 || minimal == 1);
 
     if ((users = hashCreate(-1)) < 0) {
@@ -168,7 +169,7 @@ PUBLIC int websOpenAuth(int minimal)
 }
 
 
-PUBLIC void websCloseAuth() 
+PUBLIC void websCloseAuth()
 {
     WebsKey     *key, *next;
 
@@ -206,6 +207,7 @@ PUBLIC int websWriteAuthFile(char *path)
     tempFile = websTempFile(NULL, NULL);
     if ((fp = fopen(tempFile, "w" FILE_TEXT)) == 0) {
         error("Cannot open %s", tempFile);
+        wfree(tempFile);
         return -1;
     }
     fprintf(fp, "#\n#   %s - Authorization data\n#\n\n", basename(path));
@@ -232,8 +234,10 @@ PUBLIC int websWriteAuthFile(char *path)
     unlink(path);
     if (rename(tempFile, path) < 0) {
         error("Cannot create new %s", path);
+        wfree(tempFile);
         return -1;
     }
+    wfree(tempFile);
     return 0;
 }
 #endif
@@ -279,10 +283,10 @@ WebsUser *websAddUser(char *username, char *password, char *roles)
 }
 
 
-PUBLIC int websRemoveUser(char *username) 
+PUBLIC int websRemoveUser(char *username)
 {
     WebsKey     *key;
-    
+
     assert(username);
     if ((key = hashLookup(users, username)) != 0) {
         freeUser(key->content.value.symbol);
@@ -445,7 +449,7 @@ static void freeRole(WebsRole *rp)
 /*
     Does not recompute abilities for users that use this role
  */
-PUBLIC int websRemoveRole(char *name) 
+PUBLIC int websRemoveRole(char *name)
 {
     WebsRole    *rp;
     WebsKey     *sym;
@@ -496,7 +500,7 @@ PUBLIC bool websLoginUser(Webs *wp, char *username, char *password)
         return 0;
     }
     trace(2, "Login successful for %s", username);
-    websSetSessionVar(wp, WEBS_SESSION_USERNAME, wp->username);                                
+    websSetSessionVar(wp, WEBS_SESSION_USERNAME, wp->username);
     return 1;
 }
 
@@ -524,7 +528,7 @@ static void loginServiceProc(Webs *wp)
     assert(wp);
     route = wp->route;
     assert(route);
-    
+
     if (websLoginUser(wp, websGetVar(wp, "username", ""), websGetVar(wp, "password", ""))) {
         /* If the application defines a referrer session var, redirect to that */
         char *referrer;
@@ -617,7 +621,7 @@ PUBLIC bool websVerifyPasswordFromPam(Webs *wp)
     struct pam_conv     conv = { pamChat, &info };
     struct group        *gp;
     int                 res, i;
-   
+
     assert(wp);
     assert(wp->username && wp->username);
     assert(wp->password);
@@ -643,8 +647,8 @@ PUBLIC bool websVerifyPasswordFromPam(Webs *wp)
     if (!wp->user) {
         Gid     groups[32];
         int     ngroups;
-        /* 
-            Create a temporary user with a abilities set to the groups 
+        /*
+            Create a temporary user with a abilities set to the groups
          */
         ngroups = sizeof(groups) / sizeof(Gid);
         if ((i = getgrouplist(wp->username, 99999, groups, &ngroups)) >= 0) {
@@ -667,15 +671,15 @@ PUBLIC bool websVerifyPasswordFromPam(Webs *wp)
 }
 
 
-/*  
+/*
     Callback invoked by the pam_authenticate function
  */
-static int pamChat(int msgCount, const struct pam_message **msg, struct pam_response **resp, void *data) 
+static int pamChat(int msgCount, const struct pam_message **msg, struct pam_response **resp, void *data)
 {
     UserInfo                *info;
     struct pam_response     *reply;
     int                     i;
-    
+
     i = 0;
     reply = 0;
     info = (UserInfo*) data;
@@ -689,7 +693,7 @@ static int pamChat(int msgCount, const struct pam_message **msg, struct pam_resp
     for (i = 0; i < msgCount; i++) {
         reply[i].resp_retcode = 0;
         reply[i].resp = 0;
-        
+
         switch (msg[i]->msg_style) {
         case PAM_PROMPT_ECHO_ON:
             reply[i].resp = sclone(info->name);
@@ -722,7 +726,7 @@ static int jsCan(int jsid, Webs *wp, int argc, char **argv)
         return 0;
     }
     return 1;
-} 
+}
 #endif
 
 
@@ -740,6 +744,8 @@ static bool parseBasicDetails(Webs *wp)
             *cp++ = '\0';
         }
     }
+    wfree(wp->username);
+    wfree(wp->password);
     if (cp) {
         wp->username = sclone(userAuth);
         wp->password = sclone(cp);
@@ -764,6 +770,7 @@ static void digestLogin(Webs *wp)
     nonce = createDigestNonce(wp);
     /* Opaque is unused. Set to anything */
     opaque = "5ccc069c403ebaf9f0171e9517f40e41";
+    wfree(wp->authResponse);
     wp->authResponse = sfmt(
         "Digest realm=\"%s\", domain=\"%s\", qop=\"%s\", nonce=\"%s\", opaque=\"%s\", algorithm=\"%s\", stale=\"%s\"",
         ME_GOAHEAD_REALM, websGetServerUrl(), "auth", nonce, opaque, "MD5", "FALSE");
@@ -839,6 +846,7 @@ static bool parseDigestDetails(Webs *wp)
 
         case 'c':
             if (scaselesscmp(key, "cnonce") == 0) {
+                wfree(wp->cnonce);
                 wp->cnonce = sclone(value);
             }
             break;
@@ -851,29 +859,35 @@ static bool parseDigestDetails(Webs *wp)
 
         case 'n':
             if (scaselesscmp(key, "nc") == 0) {
+                wfree(wp->nc);
                 wp->nc = sclone(value);
             } else if (scaselesscmp(key, "nonce") == 0) {
+                wfree(wp->nonce);
                 wp->nonce = sclone(value);
             }
             break;
 
         case 'o':
             if (scaselesscmp(key, "opaque") == 0) {
+                wfree(wp->opaque);
                 wp->opaque = sclone(value);
             }
             break;
 
         case 'q':
             if (scaselesscmp(key, "qop") == 0) {
+                wfree(wp->qop);
                 wp->qop = sclone(value);
             }
             break;
 
         case 'r':
             if (scaselesscmp(key, "realm") == 0) {
+                wfree(wp->realm);
                 wp->realm = sclone(value);
             } else if (scaselesscmp(key, "response") == 0) {
                 /* Store the response digest in the password field. This is MD5(user:realm:password) */
+                wfree(wp->password);
                 wp->password = sclone(value);
                 wp->encoded = 1;
             }
@@ -883,11 +897,13 @@ static bool parseDigestDetails(Webs *wp)
             if (scaselesscmp(key, "stale") == 0) {
                 break;
             }
-        
+
         case 'u':
             if (scaselesscmp(key, "uri") == 0) {
+                wfree(wp->digestUri);
                 wp->digestUri = sclone(value);
             } else if (scaselesscmp(key, "username") == 0 || scaselesscmp(key, "user") == 0) {
+                wfree(wp->username);
                 wp->username = sclone(value);
             }
             break;
@@ -947,6 +963,7 @@ static bool parseDigestDetails(Webs *wp)
         }
     }
     wfree(decoded);
+    wfree(wp->digest);
     wp->digest = calcDigest(wp, 0, wp->user->password);
     return 1;
 }
@@ -970,16 +987,16 @@ static char *createDigestNonce(Webs *wp)
 
 static char *parseDigestNonce(char *nonce, char **secret, char **realm, WebsTime *when)
 {
-    char    *tok, *decoded, *whenStr;                                                                      
-                                                                                                           
+    char    *tok, *decoded, *whenStr;
+
     assert(nonce && *nonce);
     assert(secret);
     assert(realm);
     assert(when);
 
-    if ((decoded = websDecode64(nonce)) == 0) {                                                             
+    if ((decoded = websDecode64(nonce)) == 0) {
         return 0;
-    }                                                                                                      
+    }
     *secret = stok(decoded, ":", &tok);
     *realm = stok(NULL, ":", &tok);
     whenStr = stok(NULL, ":", &tok);
@@ -1000,7 +1017,7 @@ static char *calcDigest(Webs *wp, char *username, char *password)
     assert(password);
 
     /*
-        Compute HA1. If username == 0, then the password is already expected to be in the HA1 format 
+        Compute HA1. If username == 0, then the password is already expected to be in the HA1 format
         (MD5(username:realm:password).
      */
     if (username == 0) {
@@ -1012,7 +1029,7 @@ static char *calcDigest(Webs *wp, char *username, char *password)
 
     /*
         HA2
-     */ 
+     */
     method = wp->method;
     fmt(a2Buf, sizeof(a2Buf), "%s:%s", method, wp->digestUri);
     ha2 = websMD5(a2Buf);
@@ -1072,7 +1089,7 @@ PUBLIC int websSetRouteAuth(WebsRoute *route, char *auth)
     Copyright (c) Embedthis Software. All Rights Reserved.
 
     This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire 
+    You may use the Embedthis GoAhead open source license or you may acquire
     a commercial license from Embedthis Software. You agree to be fully bound
     by the terms of either license. Consult the LICENSE.md distributed with
     this software for full details and other copyrights.

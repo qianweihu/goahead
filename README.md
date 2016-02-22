@@ -1,6 +1,8 @@
 Embedthis GoAhead 3.X
 ===
 
+[![Build Status](https://travis-ci.org/embedthis/goahead.png)](https://travis-ci.org/embedthis/goahead)
+
 The most popular little embedded web server.
 
 Licensing
@@ -13,7 +15,7 @@ https://embedthis.com/goahead/licensing.html
 ### Building
 
 You can build with Make or with MakeMe. MakeMe is quicker and more flexible.
-To install MakeMe, download it from https://embedthis.com/makeme/download.html
+To install MakeMe, download it from https://embedthis.com/makeme/
 
 ### To build with make:
 
