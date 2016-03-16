@@ -6,16 +6,19 @@ void func(char *d, int b, unsigned int len)
 
 int main(int argc, char *argv[])
 {
-    unsigned int x;
+    unsigned int x, y;
     unsigned int i;
     char c1[10] = "";
     char c2[100] = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
-    x = 100; //snprintf(c1, 10, "%s", argv[1]);
+    x = 100;
     y = snprintf(c1, 10, "%s", c2);
 
     for (i = 0; i < x; i++) {
         memset(c1, 0, i);
+    }
+
+    for (i = 0; i < x; i++) {
         func(c1, 0, i);
     }
 
